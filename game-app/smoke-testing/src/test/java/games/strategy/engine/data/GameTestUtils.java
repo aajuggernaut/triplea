@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +49,26 @@ public class GameTestUtils {
   }
 
   public static ServerGame setUpGameWithAis(String xmlName) {
+    return setUpGameWithAis(xmlName, GameTestUtils::allProAi);
+  }
+
+  private static Map<String, PlayerTypes.Type> allProAi(GameData gameData) {
+    Map<String, PlayerTypes.Type> playerTypes = new HashMap<>();
+    for (var player : gameData.getPlayerList().getPlayers()) {
+      playerTypes.put(player.getName(), PlayerTypes.PRO_AI);
+    }
+    return playerTypes;
+  }
+
+  /**
+   * Sets up an all-AI game, letting the caller decide which AI plays each player. This enables
+   * evaluating one AI implementation against another within a single game.
+   *
+   * @param playerTypeAssigner Given the parsed game data, returns a player-name to AI-type mapping.
+   *     Every player in the game must be present in the returned map.
+   */
+  public static ServerGame setUpGameWithAis(
+      String xmlName, Function<GameData, Map<String, PlayerTypes.Type>> playerTypeAssigner) {
     Path xmlFilePath = Path.of("src", "test", "resources", "map-xmls", xmlName);
     if (!Files.exists(xmlFilePath)) {
       throw new IllegalStateException(
@@ -57,10 +78,7 @@ public class GameTestUtils {
     GameData gameData =
         GameParser.parse(xmlFilePath, false)
             .orElseThrow(() -> new RuntimeException("Error parsing file: " + xmlFilePath));
-    Map<String, PlayerTypes.Type> playerTypes = new HashMap<>();
-    for (var player : gameData.getPlayerList().getPlayers()) {
-      playerTypes.put(player.getName(), PlayerTypes.PRO_AI);
-    }
+    Map<String, PlayerTypes.Type> playerTypes = playerTypeAssigner.apply(gameData);
     Set<Player> gamePlayers = gameData.getGameLoader().newPlayers(playerTypes);
     HeadlessLaunchAction launchAction = new HeadlessLaunchAction(mock(HeadlessGameServer.class));
     Messengers messengers = new Messengers(new LocalNoOpMessenger());

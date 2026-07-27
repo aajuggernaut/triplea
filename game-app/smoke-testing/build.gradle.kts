@@ -18,6 +18,23 @@ tasks.named<Test>("test") {
     maxHeapSize = "2G"
 }
 
+// Batch headless PTV games for AI evaluation. Runs games sequentially: ProAi shares a static
+// ConcurrentBattleCalculator across instances, so concurrent games in one JVM corrupt each other.
+// For parallelism, launch multiple processes with disjoint --seeds.
+tasks.register<JavaExec>("ptvEval") {
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    description = "Runs batch headless WW2 Path to Victory AI games and writes a results CSV"
+
+    dependsOn(tasks.named("testClasses"))
+    mainClass.set("org.triplea.ptv.eval.PtvEvalRunner")
+    classpath = sourceSets["test"].runtimeClasspath
+    // PtvEvalRunner resolves the map XML relative to the project directory.
+    workingDir = projectDir
+    maxHeapSize = (project.findProperty("ptvEvalHeap") as String?) ?: "6G"
+    args = (project.findProperty("ptvEvalArgs") as String?)?.split(" ")?.filter { it.isNotBlank() }
+        ?: listOf("--games", "2", "--side", "axis", "--max-rounds", "20")
+}
+
 // Gather all URLs in the same game list file
 val downloadURLs = mutableListOf<String>()
 val saveGamesFile = project.layout.projectDirectory.file("save-game-list.txt").asFile
