@@ -10,6 +10,7 @@ import games.strategy.triplea.Properties;
 import games.strategy.triplea.ai.pro.data.ProPurchaseOption;
 import games.strategy.triplea.ai.pro.data.ProPurchaseOptionMap;
 import games.strategy.triplea.ai.pro.data.ProTerritory;
+import games.strategy.triplea.ai.pro.util.ProObjectiveValueUtils;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.delegate.Matches;
 import games.strategy.triplea.util.TuvCostsCalculator;
@@ -41,6 +42,10 @@ public final class ProData {
   // future, we could add logic about moving such units to factory territories from elsewhere.
   private final Set<Unit> unitsToBeConsumed = new HashSet<>();
   private double minCostPerHitPoint = Double.MAX_VALUE;
+  // National-objective income attributable to each territory, in PUs. Computed per turn rather
+  // than cached statically: ProAi instances outlive a single game in batch evaluation, so a static
+  // cache would serve one game's territories to the next.
+  private Map<Territory, Double> objectiveValues = Map.of();
 
   private AbstractProAi proAi;
   private GameData data;
@@ -87,6 +92,7 @@ public final class ProData {
     unitValueMap = new TuvCostsCalculator().getCostsForTuv(player);
     purchaseOptions = new ProPurchaseOptionMap(player, data);
     minCostPerHitPoint = getMinCostPerHitPoint(purchaseOptions.getLandOptions());
+    objectiveValues = ProObjectiveValueUtils.findObjectiveValues(data);
   }
 
   private static Map<Unit, Territory> newUnitTerritoryMap(final GameState data) {

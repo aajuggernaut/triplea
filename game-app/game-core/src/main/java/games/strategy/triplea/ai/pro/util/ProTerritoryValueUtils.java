@@ -37,6 +37,10 @@ public final class ProTerritoryValueUtils {
     final int isEnemyFactory =
         ProMatches.territoryHasInfraFactoryAndIsEnemyLand(player).test(t) ? 1 : 0;
     double value = 3.0 * TerritoryAttachment.getProduction(t) * (isEnemyFactory + 1);
+    // Objective income is recurring income like territory production, so it is weighted the same.
+    // Without this the AI cannot see why a low-production territory that unlocks a bonus, or one
+    // that denies the enemy theirs, is worth taking at all.
+    value += 3.0 * proData.getObjectiveValues().getOrDefault(t, 0.0);
     if (ProUtils.isNeutralLand(t)) {
       final double strength =
           ProBattleUtils.estimateStrength(
@@ -329,6 +333,10 @@ public final class ProTerritoryValueUtils {
     if (ProMatches.territoryHasInfraFactoryAndIsLand().test(t)) {
       value *= 1.1; // prefer territories with factories
     }
+    // A territory that unlocks national-objective income is worth holding for that income alone,
+    // regardless of where it sits relative to enemy factories. Added unscaled: the values summed
+    // above are raw production, unlike findTerritoryAttackValue which works in 3x production.
+    value += proData.getObjectiveValues().getOrDefault(t, 0.0);
 
     return value;
   }
