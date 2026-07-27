@@ -56,6 +56,24 @@ import org.triplea.java.collections.IntegerMap;
 /** Pro purchase AI. */
 class ProPurchaseAi {
 
+  /**
+   * Rounds during which PTV bots keep stock fodder weighting. A first-round infantry and artillery
+   * buy is correct for building bodies; the defect is failing to shift afterwards.
+   */
+  private static final int PTV_FODDER_GRACE_ROUNDS = 1;
+
+  /**
+   * Percentage points shaved off the fodder share for PTV bots after the grace rounds.
+   *
+   * <p>Stock weighting is {@code 80 - enemyDistance * 5}, so a territory one or two moves from a
+   * front buys 70-80% fodder. That holds ground but cannot take it, and PTV rewards converting
+   * early tempo into territory before the opposing coalition reinforces. Measured across 8 stock
+   * games, Germany placed 231 infantry and 53 artillery against 3 armour.
+   *
+   * <p>The magnitude is a first estimate to be tuned by measurement, not a derived constant.
+   */
+  private static final int PTV_FODDER_PERCENT_REDUCTION = 25;
+
   private final ProOddsCalculator calc;
   private final ProData proData;
   private GameData data;
@@ -1093,7 +1111,10 @@ class ProPurchaseAi {
       if (enemyDistance <= 0) {
         enemyDistance = 10;
       }
-      final int fodderPercent = 80 - enemyDistance * 5;
+      int fodderPercent = 80 - enemyDistance * 5;
+      if (proData.isPtvFeatures() && data.getSequence().getRound() > PTV_FODDER_GRACE_ROUNDS) {
+        fodderPercent = Math.max(0, fodderPercent - PTV_FODDER_PERCENT_REDUCTION);
+      }
       ProLogger.debug(t + ", enemyDistance=" + enemyDistance + ", fodderPercent=" + fodderPercent);
       final Set<Territory> neighbors =
           data.getMap().getNeighbors(t, 2, ProMatches.territoryCanMoveLandUnits(player, false));
