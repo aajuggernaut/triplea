@@ -51,6 +51,22 @@ public final class ProData {
   private GameData data;
   private GamePlayer player;
 
+  /**
+   * Whether PTV-specific behaviour is enabled. False for stock ProAi and FastAi, true for {@link
+   * games.strategy.triplea.ai.pro.PtvProAi}. This is what lets the evaluation harness run a patched
+   * bot against a stock one inside a single game, which is the only way to attribute a change to
+   * the patch rather than to the map or the dice.
+   */
+  private final boolean ptvFeatures;
+
+  public ProData() {
+    this(false);
+  }
+
+  public ProData(final boolean ptvFeatures) {
+    this.ptvFeatures = ptvFeatures;
+  }
+
   public void initialize(final AbstractProAi proAi) {
     hiddenInitialize(proAi, proAi.getGameData(), proAi.getGamePlayer(), false);
   }
@@ -92,7 +108,7 @@ public final class ProData {
     unitValueMap = new TuvCostsCalculator().getCostsForTuv(player);
     purchaseOptions = new ProPurchaseOptionMap(player, data);
     minCostPerHitPoint = getMinCostPerHitPoint(purchaseOptions.getLandOptions());
-    objectiveValues = ProObjectiveValueUtils.findObjectiveValues(data);
+    objectiveValues = ptvFeatures ? ProObjectiveValueUtils.findObjectiveValues(data) : Map.of();
   }
 
   private static Map<Unit, Territory> newUnitTerritoryMap(final GameState data) {

@@ -347,8 +347,10 @@ public final class PtvEvalRunner {
       case "pro" -> PlayerTypes.PRO_AI;
       case "fast" -> PlayerTypes.FAST_AI;
       case "weak" -> PlayerTypes.WEAK_AI;
+      case "ptv" -> PlayerTypes.PTV_AI;
       default ->
-          throw new IllegalArgumentException("Unknown bot '" + name + "' (expected pro|fast|weak)");
+          throw new IllegalArgumentException(
+              "Unknown bot '" + name + "' (expected pro|fast|weak|ptv)");
     };
   }
 
