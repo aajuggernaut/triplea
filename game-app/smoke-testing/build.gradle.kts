@@ -31,6 +31,12 @@ tasks.register<JavaExec>("ptvEval") {
     // PtvEvalRunner resolves the map XML relative to the project directory.
     workingDir = projectDir
     maxHeapSize = (project.findProperty("ptvEvalHeap") as String?) ?: "6G"
+    // ConcurrentBattleCalculator sizes its worker pool from Runtime.availableProcessors() and makes
+    // one full GameData copy per worker, so an uncapped run will use every core on the machine.
+    // -PptvEvalCores caps the JVM's view of the CPU count, keeping the machine usable during a run.
+    (project.findProperty("ptvEvalCores") as String?)?.let { cores ->
+        jvmArgs("-XX:ActiveProcessorCount=$cores")
+    }
     args = (project.findProperty("ptvEvalArgs") as String?)?.split(" ")?.filter { it.isNotBlank() }
         ?: listOf("--games", "2", "--side", "axis", "--max-rounds", "20")
 }
