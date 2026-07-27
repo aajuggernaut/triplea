@@ -3,9 +3,12 @@ package org.triplea.ptv.eval;
 import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.GameTestUtils;
+import games.strategy.engine.data.Territory;
 import games.strategy.engine.framework.ServerGame;
 import games.strategy.engine.framework.startup.ui.PlayerTypes;
+import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.delegate.EndRoundDelegate;
+import games.strategy.triplea.delegate.Matches;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
@@ -18,18 +21,29 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.triplea.java.collections.CollectionUtils;
 
 /**
- * Batch runner for headless WW2 Path to Victory games, used to measure the win-rate delta between a
- * candidate AI and a baseline AI.
+ * Batch runner for headless WW2 Path to Victory games, used to compare a candidate AI against a
+ * baseline AI.
  *
  * <p>Usage (from the smoke-testing project directory):
  *
  * <pre>
  *   ./gradlew :smoke-testing:ptvEval -PptvEvalArgs="--games 20 --candidate pro --baseline weak"
  * </pre>
+ *
+ * <p><b>Win/loss is not the primary metric.</b> PTV enables only {@code Triggered Victory}: Total
+ * Victory, Honorable Surrender, Projection of Power and Economic Victory are all absent from the
+ * map XML and default to false. A game therefore ends only when a map-defined victory trigger
+ * fires, which bot-vs-bot play frequently never reaches -- an observed ProAI-vs-WeakAi game ran the
+ * full 60 rounds undecided. Every game is consequently scored on material position at the final
+ * round (victory cities, production, units held per side), which yields a graded signal whether or
+ * not anyone actually wins.
  *
  * <p><b>Do not run two instances of this in one JVM.</b> {@code ProAi} holds a {@code static final
  * ConcurrentBattleCalculator} shared by every ProAi instance, and rebinds its game data in {@code
@@ -64,8 +78,7 @@ public final class PtvEvalRunner {
       csv.println("# map=WW2 Path to Victory v6.4 (commit 45354ca)");
       csv.println("# candidate=" + options.candidate + " baseline=" + options.baseline);
       csv.println("# maxRounds=" + options.maxRounds + " games=" + (seeds.size() * sides.size()));
-      csv.println(
-          "seed,candidate_side,outcome,winning_alliance,winners,rounds,duration_ms,candidate_won");
+      csv.println(GameOutcome.csvHeader());
       csv.flush();
 
       for (final String side : sides) {
@@ -76,10 +89,16 @@ public final class PtvEvalRunner {
           csv.println(outcome.toCsvRow());
           csv.flush();
           log.info(
-              "seed={} candidateSide={} -> {} ({} rounds, {} ms)",
+              "seed={} candidateSide={} -> {} | VC {}v{} prod {}v{} units {}v{} | {} rounds, {} ms",
               seed,
               side,
-              outcome.winningAlliance(),
+              outcome.outcome(),
+              outcome.candidateScore().victoryCities(),
+              outcome.opponentScore().victoryCities(),
+              outcome.candidateScore().production(),
+              outcome.opponentScore().production(),
+              outcome.candidateScore().units(),
+              outcome.opponentScore().units(),
               outcome.rounds(),
               outcome.durationMs());
         }
@@ -101,6 +120,7 @@ public final class PtvEvalRunner {
       final int maxRounds) {
 
     final long startNanos = System.nanoTime();
+    final String opponentSide = candidateSide.equals(AXIS) ? ALLIES : AXIS;
     ServerGame game = null;
     try {
       game =
@@ -115,31 +135,43 @@ public final class PtvEvalRunner {
 
       // The counter has already advanced into the round we refused to play, so a capped game
       // reports maxRounds rather than maxRounds + 1. A game that ended on its own is unaffected.
-      final int rounds = Math.min(game.getData().getSequence().getRound(), maxRounds);
-      final EndRoundDelegate endDelegate = (EndRoundDelegate) game.getData().getEndRoundDelegate();
+      final GameData data = game.getData();
+      final int rounds = Math.min(data.getSequence().getRound(), maxRounds);
+      final EndRoundDelegate endDelegate = (EndRoundDelegate) data.getEndRoundDelegate();
       final Collection<GamePlayer> winners = endDelegate.getWinners();
 
-      if (!game.isGameOver() || winners.isEmpty()) {
-        return new GameOutcome(
-            seed, candidateSide, "ROUND_CAP", "none", List.of(), rounds, elapsedMs(startNanos));
-      }
+      final SideScore candidateScore = scoreAlliance(data, candidateSide);
+      final SideScore opponentScore = scoreAlliance(data, opponentSide);
 
-      final String winningAlliance = allianceOf(game.getData(), winners);
+      final boolean decided = game.isGameOver() && !winners.isEmpty();
+      final String outcome = decided ? "VICTORY" : "ROUND_CAP";
+      final String winningAlliance = decided ? allianceOf(data, winners) : "none";
       final List<String> winnerNames =
           winners.stream().map(GamePlayer::getName).collect(Collectors.toList());
+
       return new GameOutcome(
           seed,
           candidateSide,
-          "VICTORY",
+          outcome,
           winningAlliance,
-          winnerNames,
+          decided ? winnerNames : List.of(),
           rounds,
-          elapsedMs(startNanos));
+          elapsedMs(startNanos),
+          candidateScore,
+          opponentScore);
 
     } catch (final RuntimeException e) {
       log.error("Game failed (seed={}, candidateSide={})", seed, candidateSide, e);
       return new GameOutcome(
-          seed, candidateSide, "ERROR", "none", List.of(), -1, elapsedMs(startNanos));
+          seed,
+          candidateSide,
+          "ERROR",
+          "none",
+          List.of(),
+          -1,
+          elapsedMs(startNanos),
+          SideScore.EMPTY,
+          SideScore.EMPTY);
     } finally {
       if (game != null) {
         // Required between games: releases the shared ConcurrentBattleCalculator's threads and
@@ -147,6 +179,27 @@ public final class PtvEvalRunner {
         game.stopGame();
       }
     }
+  }
+
+  /**
+   * Material position of one alliance: victory cities held, production income, and units on the
+   * board. This is the graded metric that replaces win/loss, since PTV games between bots usually
+   * end at the round cap rather than by a victory trigger.
+   */
+  private static SideScore scoreAlliance(final GameData data, final String alliance) {
+    final Set<GamePlayer> members = data.getAllianceTracker().getPlayersInAlliance(alliance);
+    int victoryCities = 0;
+    int production = 0;
+    int units = 0;
+    for (final Territory t : data.getMap().getTerritories()) {
+      if (Matches.isTerritoryOwnedByAnyOf(members).test(t)) {
+        victoryCities +=
+            TerritoryAttachment.get(t).map(TerritoryAttachment::getVictoryCity).orElse(0);
+        production += TerritoryAttachment.getProduction(t);
+      }
+      units += CollectionUtils.countMatches(t.getUnits(), u -> members.contains(u.getOwner()));
+    }
+    return new SideScore(victoryCities, production, units);
   }
 
   /**
@@ -169,6 +222,14 @@ public final class PtvEvalRunner {
     for (final GamePlayer player : data.getPlayerList().getPlayers()) {
       types.put(player.getName(), candidatePlayers.contains(player) ? candidate : baseline);
     }
+    // Logged every game as an audit trail: if this ever shows a single AI type covering all 15
+    // players, the comparison is measuring a bot against itself and the results are worthless.
+    final Map<String, Long> byLabel =
+        types.values().stream()
+            .collect(
+                Collectors.groupingBy(
+                    PlayerTypes.Type::getLabel, TreeMap::new, Collectors.counting()));
+    log.info("AI assignment (candidate plays {}): {}", candidateSide, byLabel);
     return types;
   }
 
@@ -189,26 +250,38 @@ public final class PtvEvalRunner {
     for (final String side : options.sides()) {
       final List<GameOutcome> forSide =
           outcomes.stream().filter(o -> o.candidateSide().equals(side)).toList();
-      final long decided = forSide.stream().filter(o -> o.outcome().equals("VICTORY")).count();
+      final List<GameOutcome> scored =
+          forSide.stream().filter(o -> !o.outcome().equals("ERROR")).toList();
       final long wins = forSide.stream().filter(GameOutcome::candidateWon).count();
+      final long decided = forSide.stream().filter(o -> o.outcome().equals("VICTORY")).count();
       log.info(
-          "candidate as {}: {} wins / {} decided ({} games run, {} undecided or errored)",
+          "candidate as {}: {} games | {} decided ({} won) | mean VC {} vs {} | mean prod {} vs {}",
           side,
-          wins,
-          decided,
           forSide.size(),
-          forSide.size() - decided);
+          decided,
+          wins,
+          mean(scored, o -> o.candidateScore().victoryCities()),
+          mean(scored, o -> o.opponentScore().victoryCities()),
+          mean(scored, o -> o.candidateScore().production()),
+          mean(scored, o -> o.opponentScore().production()));
     }
-    final long totalDecided = outcomes.stream().filter(o -> o.outcome().equals("VICTORY")).count();
-    final long totalWins = outcomes.stream().filter(GameOutcome::candidateWon).count();
+    final List<GameOutcome> scored =
+        outcomes.stream().filter(o -> !o.outcome().equals("ERROR")).toList();
+    final long vcAhead = scored.stream().filter(GameOutcome::candidateAheadOnVictoryCities).count();
     log.info(
-        "OVERALL: {} / {} decided games won by candidate{}",
-        totalWins,
-        totalDecided,
-        totalDecided == 0
-            ? ""
-            : String.format(Locale.ROOT, " (%.1f%%)", 100.0 * totalWins / totalDecided));
+        "OVERALL: candidate ahead on victory cities in {} of {} scored games",
+        vcAhead,
+        scored.size());
     log.info("CSV written to {}", options.out.toAbsolutePath());
+  }
+
+  private static String mean(
+      final List<GameOutcome> outcomes, final java.util.function.ToIntFunction<GameOutcome> f) {
+    if (outcomes.isEmpty()) {
+      return "n/a";
+    }
+    return String.format(
+        Locale.ROOT, "%.1f", outcomes.stream().mapToInt(f).average().orElse(Double.NaN));
   }
 
   private static long elapsedMs(final long startNanos) {
@@ -225,6 +298,11 @@ public final class PtvEvalRunner {
     };
   }
 
+  /** Material position of one alliance at the end of a game. */
+  private record SideScore(int victoryCities, int production, int units) {
+    static final SideScore EMPTY = new SideScore(-1, -1, -1);
+  }
+
   /** One row of the results CSV. */
   private record GameOutcome(
       long seed,
@@ -233,10 +311,22 @@ public final class PtvEvalRunner {
       String winningAlliance,
       List<String> winners,
       int rounds,
-      long durationMs) {
+      long durationMs,
+      SideScore candidateScore,
+      SideScore opponentScore) {
 
     boolean candidateWon() {
       return outcome.equals("VICTORY") && winningAlliance.equals(candidateSide);
+    }
+
+    boolean candidateAheadOnVictoryCities() {
+      return candidateScore.victoryCities() > opponentScore.victoryCities();
+    }
+
+    static String csvHeader() {
+      return "seed,candidate_side,outcome,winning_alliance,winners,rounds,duration_ms,"
+          + "candidate_won,candidate_vc,opponent_vc,candidate_prod,opponent_prod,"
+          + "candidate_units,opponent_units";
     }
 
     String toCsvRow() {
@@ -249,7 +339,13 @@ public final class PtvEvalRunner {
           String.join(";", winners),
           String.valueOf(rounds),
           String.valueOf(durationMs),
-          String.valueOf(candidateWon()));
+          String.valueOf(candidateWon()),
+          String.valueOf(candidateScore.victoryCities()),
+          String.valueOf(opponentScore.victoryCities()),
+          String.valueOf(candidateScore.production()),
+          String.valueOf(opponentScore.production()),
+          String.valueOf(candidateScore.units()),
+          String.valueOf(opponentScore.units()));
     }
   }
 
