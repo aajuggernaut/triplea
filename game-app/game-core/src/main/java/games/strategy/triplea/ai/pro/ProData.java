@@ -108,7 +108,10 @@ public final class ProData {
     unitValueMap = new TuvCostsCalculator().getCostsForTuv(player);
     purchaseOptions = new ProPurchaseOptionMap(player, data);
     minCostPerHitPoint = getMinCostPerHitPoint(purchaseOptions.getLandOptions());
-    objectiveValues = ptvFeatures ? ProObjectiveValueUtils.findObjectiveValues(data) : Map.of();
+    // Recomputed every turn rather than cached: marginal objective value depends on who currently
+    // holds what, so it changes as the board does.
+    objectiveValues =
+        ptvFeatures ? ProObjectiveValueUtils.findObjectiveValues(data, player) : Map.of();
   }
 
   private static Map<Unit, Territory> newUnitTerritoryMap(final GameState data) {

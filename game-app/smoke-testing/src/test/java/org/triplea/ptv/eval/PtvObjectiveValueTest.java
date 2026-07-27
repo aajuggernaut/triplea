@@ -4,6 +4,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThan;
 
 import games.strategy.engine.data.GameData;
+import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.GameTestUtils;
 import games.strategy.engine.data.Territory;
 import games.strategy.engine.data.gameparser.GameParser;
@@ -36,13 +37,14 @@ public class PtvObjectiveValueTest {
     final GameData data =
         GameParser.parse(xml, false).orElseThrow(() -> new RuntimeException("PTV parse failed"));
 
-    final Map<Territory, Double> values = ProObjectiveValueUtils.findObjectiveValues(data);
+    final GamePlayer japan = data.getPlayerList().getPlayerId("Japanese");
+    final Map<Territory, Double> values = ProObjectiveValueUtils.findObjectiveValues(data, japan);
 
     log.info(
-        "Territories carrying objective value: {} of {}",
+        "Territories carrying objective value for Japan at game start: {} of {}",
         values.size(),
         data.getMap().getTerritories().size());
-    log.info("Top 20 by objective value (objective PUs vs the territory's own production):");
+    log.info("Top 20 by marginal objective value (PUs vs the territory's own production):");
     values.entrySet().stream()
         .sorted(Map.Entry.<Territory, Double>comparingByValue().reversed())
         .limit(20)
