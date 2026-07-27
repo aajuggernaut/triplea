@@ -67,7 +67,16 @@ public final class ProObjectiveValueUtils {
         if (objectiveValue <= 0) {
           continue;
         }
-        final boolean countEach = readCountEach(rules);
+        // An inverted objective pays out when its condition is NOT met, so its territory list does
+        // not describe ground worth holding -- often the reverse. PTV's Americans_1_Homeland is the
+        // clear case: 10 PUs per turn while America is *not* at war, listed against the three US
+        // home territories. Crediting those territories with hold value made the AI garrison and
+        // stockpile at home instead of projecting force. We cannot reason about the inverted
+        // condition here, so such objectives are skipped rather than guessed at.
+        if (readBooleanProperty(rules, "invert")) {
+          continue;
+        }
+        final boolean countEach = readBooleanProperty(rules, "countEach");
         for (final String property : OWNERSHIP_PROPERTIES) {
           final List<Territory> territories = readTerritories(rules, property, data);
           if (territories.isEmpty()) {
@@ -86,9 +95,9 @@ public final class ProObjectiveValueUtils {
     return values;
   }
 
-  private static boolean readCountEach(final RulesAttachment rules) {
+  private static boolean readBooleanProperty(final RulesAttachment rules, final String property) {
     return rules
-        .getPropertyOrEmpty("countEach")
+        .getPropertyOrEmpty(property)
         .map(MutableProperty::getValue)
         .filter(Boolean.class::isInstance)
         .map(Boolean.class::cast)

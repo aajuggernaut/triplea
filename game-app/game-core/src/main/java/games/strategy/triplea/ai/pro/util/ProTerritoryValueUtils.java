@@ -333,10 +333,17 @@ public final class ProTerritoryValueUtils {
     if (ProMatches.territoryHasInfraFactoryAndIsLand().test(t)) {
       value *= 1.1; // prefer territories with factories
     }
-    // A territory that unlocks national-objective income is worth holding for that income alone,
-    // regardless of where it sits relative to enemy factories. Added unscaled: the values summed
-    // above are raw production, unlike findTerritoryAttackValue which works in 3x production.
-    value += proData.getObjectiveValues().getOrDefault(t, 0.0);
+    // A territory that unlocks national-objective income is worth holding for that income alone.
+    // Added unscaled: the values summed above are raw production, unlike findTerritoryAttackValue
+    // which works in 3x production.
+    //
+    // Only contested ground counts. Crediting safe rear areas made the AI hoard defenders at home:
+    // observed with the USA stockpiling in Western United States while applying no pressure
+    // anywhere. An objective nobody can take from you needs no garrison, so the value is applied
+    // only where an enemy is actually within reach.
+    if (!nearbyEnemyTerritories.isEmpty()) {
+      value += proData.getObjectiveValues().getOrDefault(t, 0.0);
+    }
 
     return value;
   }
