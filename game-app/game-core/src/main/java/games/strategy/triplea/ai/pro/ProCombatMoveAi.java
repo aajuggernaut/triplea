@@ -524,6 +524,30 @@ public class ProCombatMoveAi {
     }
   }
 
+  /**
+   * Whether a PTV bot should mount an amphibious attack on a territory it cannot hold, because the
+   * territory pays income.
+   *
+   * <p>Stock ProAI drops any amphibious target it cannot hold once the target's value falls below
+   * 2, judging it not worth the units. On a Pacific-heavy map that rule fires constantly: across
+   * one 8-game run it removed Dutch New Guinea, the Solomon Islands, New Guinea, New Britain, the
+   * Marianas, Paulau, Sicily and Northern Australia, dozens of times each. Japan consequently never
+   * contests the islands at all -- observed still holding neither the Philippines nor the Dutch
+   * East Indies at round 5 despite being at war, with Manila undefended.
+   *
+   * <p>The rule undervalues the point of taking an island. Even if it is later retaken, holding it
+   * denies the enemy that income every turn it is held, and PTV attaches national objectives to
+   * exactly these territories. So a producing or objective-bearing territory stays on the target
+   * list; genuinely worthless rock is still skipped.
+   */
+  private boolean isPtvAmphibWorthTakingAnyway(final Territory t) {
+    if (!proData.isPtvFeatures()) {
+      return false;
+    }
+    return TerritoryAttachment.getProduction(t) > 0
+        || proData.getObjectiveValues().getOrDefault(t, 0.0) > 0.0;
+  }
+
   private void removeTerritoriesThatArentWorthAttacking(
       final List<ProTerritory> prioritizedTerritories) {
     ProLogger.info("Remove territories that aren't worth attacking");
@@ -575,7 +599,9 @@ public class ProCombatMoveAi {
                   + strengthDifference);
           it.remove();
           continue;
-        } else if (patd.isNeedAmphibUnits() && patd.getValue() < 2) {
+        } else if (patd.isNeedAmphibUnits()
+            && patd.getValue() < 2
+            && !isPtvAmphibWorthTakingAnyway(t)) {
 
           // Remove amphib territories that aren't worth attacking
           ProLogger.debug(
