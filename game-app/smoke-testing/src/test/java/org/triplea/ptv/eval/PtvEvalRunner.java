@@ -21,8 +21,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.java.collections.CollectionUtils;
@@ -37,13 +39,18 @@ import org.triplea.java.collections.CollectionUtils;
  *   ./gradlew :smoke-testing:ptvEval -PptvEvalArgs="--games 20 --candidate pro --baseline weak"
  * </pre>
  *
- * <p><b>Win/loss is not the primary metric.</b> PTV enables only {@code Triggered Victory}: Total
- * Victory, Honorable Surrender, Projection of Power and Economic Victory are all absent from the
- * map XML and default to false. A game therefore ends only when a map-defined victory trigger
- * fires, which bot-vs-bot play frequently never reaches -- an observed ProAI-vs-WeakAi game ran the
- * full 60 rounds undecided. Every game is consequently scored on material position at the final
- * round (victory cities, production, units held per side), which yields a graded signal whether or
- * not anyone actually wins.
+ * <p><b>Win/loss is not the metric.</b> PTV enables only {@code Triggered Victory}: Total Victory,
+ * Honorable Surrender, Projection of Power and Economic Victory are all absent from the map XML and
+ * default to false. A game ends only when a map-defined victory trigger fires, which bot-vs-bot
+ * play essentially never reaches -- across 16 measured games, zero ended in a victory, including
+ * games where the loser was reduced to zero units. Games are therefore scored on material position
+ * (victory cities, production, units held per side).
+ *
+ * <p><b>Position is sampled over time, not just at the end.</b> Endpoint-only scoring saturates: a
+ * stock-vs-stock Axis loses with 0.9 of 21 victory cities, and a run that ends 0-21 cannot show
+ * whether the collapse happened by round 10 or round 30. Material is therefore recorded at each of
+ * {@link #CHECKPOINT_ROUNDS}, so an improved bot can register as collapsing later even when the
+ * final score is unchanged.
  *
  * <p><b>Do not run two instances of this in one JVM.</b> {@code ProAi} holds a {@code static final
  * ConcurrentBattleCalculator} shared by every ProAi instance, and rebinds its game data in {@code
@@ -57,6 +64,9 @@ public final class PtvEvalRunner {
   private static final String PTV_XML = "ww2_path_to_victory.xml";
   private static final String AXIS = "Axis";
   private static final String ALLIES = "Allies";
+
+  /** Rounds at which material position is sampled mid-game. */
+  private static final List<Integer> CHECKPOINT_ROUNDS = List.of(5, 10, 15, 20, 25, 30);
 
   private PtvEvalRunner() {}
 
@@ -78,6 +88,7 @@ public final class PtvEvalRunner {
       csv.println("# map=WW2 Path to Victory v6.4 (commit 45354ca)");
       csv.println("# candidate=" + options.candidate + " baseline=" + options.baseline);
       csv.println("# maxRounds=" + options.maxRounds + " games=" + (seeds.size() * sides.size()));
+      csv.println("# checkpoints=" + CHECKPOINT_ROUNDS);
       csv.println(GameOutcome.csvHeader());
       csv.flush();
 
@@ -89,7 +100,8 @@ public final class PtvEvalRunner {
           csv.println(outcome.toCsvRow());
           csv.flush();
           log.info(
-              "seed={} candidateSide={} -> {} | VC {}v{} prod {}v{} units {}v{} | {} rounds, {} ms",
+              "seed={} candidateSide={} -> {} | VC {}v{} prod {}v{} units {}v{} | VC path {} | "
+                  + "{} rounds, {} ms",
               seed,
               side,
               outcome.outcome(),
@@ -99,6 +111,7 @@ public final class PtvEvalRunner {
               outcome.opponentScore().production(),
               outcome.candidateScore().units(),
               outcome.opponentScore().units(),
+              trajectory(outcome.checkpoints(), c -> c.candidate().victoryCities()),
               outcome.rounds(),
               outcome.durationMs());
         }
@@ -121,6 +134,7 @@ public final class PtvEvalRunner {
 
     final long startNanos = System.nanoTime();
     final String opponentSide = candidateSide.equals(AXIS) ? ALLIES : AXIS;
+    final List<Checkpoint> checkpoints = new ArrayList<>();
     ServerGame game = null;
     try {
       game =
@@ -129,13 +143,24 @@ public final class PtvEvalRunner {
       game.setRandomSource(new SeededRandomSource(seed));
       game.setStopGameOnDelegateExecutionStop(true);
 
-      while (!game.isGameOver() && game.getData().getSequence().getRound() <= maxRounds) {
+      final GameData data = game.getData();
+      int lastRound = -1;
+      while (!game.isGameOver() && data.getSequence().getRound() <= maxRounds) {
         game.runNextStep();
+        final int round = data.getSequence().getRound();
+        if (round != lastRound) {
+          lastRound = round;
+          // Sampled on entering the round, so the value reflects the position going into it.
+          if (CHECKPOINT_ROUNDS.contains(round) && round <= maxRounds) {
+            checkpoints.add(
+                new Checkpoint(
+                    round, scoreAlliance(data, candidateSide), scoreAlliance(data, opponentSide)));
+          }
+        }
       }
 
       // The counter has already advanced into the round we refused to play, so a capped game
       // reports maxRounds rather than maxRounds + 1. A game that ended on its own is unaffected.
-      final GameData data = game.getData();
       final int rounds = Math.min(data.getSequence().getRound(), maxRounds);
       final EndRoundDelegate endDelegate = (EndRoundDelegate) data.getEndRoundDelegate();
       final Collection<GamePlayer> winners = endDelegate.getWinners();
@@ -144,21 +169,20 @@ public final class PtvEvalRunner {
       final SideScore opponentScore = scoreAlliance(data, opponentSide);
 
       final boolean decided = game.isGameOver() && !winners.isEmpty();
-      final String outcome = decided ? "VICTORY" : "ROUND_CAP";
-      final String winningAlliance = decided ? allianceOf(data, winners) : "none";
       final List<String> winnerNames =
           winners.stream().map(GamePlayer::getName).collect(Collectors.toList());
 
       return new GameOutcome(
           seed,
           candidateSide,
-          outcome,
-          winningAlliance,
+          decided ? "VICTORY" : "ROUND_CAP",
+          decided ? allianceOf(data, winners) : "none",
           decided ? winnerNames : List.of(),
           rounds,
           elapsedMs(startNanos),
           candidateScore,
-          opponentScore);
+          opponentScore,
+          checkpoints);
 
     } catch (final RuntimeException e) {
       log.error("Game failed (seed={}, candidateSide={})", seed, candidateSide, e);
@@ -171,7 +195,8 @@ public final class PtvEvalRunner {
           -1,
           elapsedMs(startNanos),
           SideScore.EMPTY,
-          SideScore.EMPTY);
+          SideScore.EMPTY,
+          checkpoints);
     } finally {
       if (game != null) {
         // Required between games: releases the shared ConcurrentBattleCalculator's threads and
@@ -223,7 +248,7 @@ public final class PtvEvalRunner {
       types.put(player.getName(), candidatePlayers.contains(player) ? candidate : baseline);
     }
     // Logged every game as an audit trail: if this ever shows a single AI type covering all 15
-    // players, the comparison is measuring a bot against itself and the results are worthless.
+    // players when candidate and baseline differ, the run is measuring a bot against itself.
     final Map<String, Long> byLabel =
         types.values().stream()
             .collect(
@@ -244,6 +269,14 @@ public final class PtvEvalRunner {
     return "other";
   }
 
+  /** Formats checkpoint samples as {@code round:value} pairs, e.g. {@code 5:12;10:6;15:3}. */
+  private static String trajectory(
+      final List<Checkpoint> checkpoints, final ToIntFunction<Checkpoint> value) {
+    return checkpoints.stream()
+        .map(c -> c.round() + ":" + value.applyAsInt(c))
+        .collect(Collectors.joining(";"));
+  }
+
   private static void summarize(final List<GameOutcome> outcomes, final Options options) {
     log.info("================ PTV EVAL SUMMARY ================");
     log.info("candidate={}  baseline={}", options.candidate, options.baseline);
@@ -255,7 +288,7 @@ public final class PtvEvalRunner {
       final long wins = forSide.stream().filter(GameOutcome::candidateWon).count();
       final long decided = forSide.stream().filter(o -> o.outcome().equals("VICTORY")).count();
       log.info(
-          "candidate as {}: {} games | {} decided ({} won) | mean VC {} vs {} | mean prod {} vs {}",
+          "candidate as {}: {} games | {} decided ({} won) | final VC {} vs {} | final prod {} vs {}",
           side,
           forSide.size(),
           decided,
@@ -264,6 +297,24 @@ public final class PtvEvalRunner {
           mean(scored, o -> o.opponentScore().victoryCities()),
           mean(scored, o -> o.candidateScore().production()),
           mean(scored, o -> o.opponentScore().production()));
+
+      // The collapse curve: where the candidate's position stood entering each checkpoint round.
+      // Two bots with the same final score can differ sharply here, which is the point.
+      final StringBuilder curve = new StringBuilder();
+      for (final int round : CHECKPOINT_ROUNDS) {
+        final OptionalDouble avg =
+            scored.stream()
+                .map(o -> checkpointAt(o, round))
+                .filter(java.util.Objects::nonNull)
+                .mapToInt(c -> c.candidate().victoryCities())
+                .average();
+        if (avg.isPresent()) {
+          curve
+              .append(curve.length() == 0 ? "" : "  ")
+              .append(String.format(Locale.ROOT, "r%d:%.1f", round, avg.getAsDouble()));
+        }
+      }
+      log.info("  mean candidate VC by round: {}", curve);
     }
     final List<GameOutcome> scored =
         outcomes.stream().filter(o -> !o.outcome().equals("ERROR")).toList();
@@ -275,8 +326,11 @@ public final class PtvEvalRunner {
     log.info("CSV written to {}", options.out.toAbsolutePath());
   }
 
-  private static String mean(
-      final List<GameOutcome> outcomes, final java.util.function.ToIntFunction<GameOutcome> f) {
+  private static Checkpoint checkpointAt(final GameOutcome outcome, final int round) {
+    return outcome.checkpoints().stream().filter(c -> c.round() == round).findFirst().orElse(null);
+  }
+
+  private static String mean(final List<GameOutcome> outcomes, final ToIntFunction<GameOutcome> f) {
     if (outcomes.isEmpty()) {
       return "n/a";
     }
@@ -298,10 +352,13 @@ public final class PtvEvalRunner {
     };
   }
 
-  /** Material position of one alliance at the end of a game. */
+  /** Material position of one alliance at a point in time. */
   private record SideScore(int victoryCities, int production, int units) {
     static final SideScore EMPTY = new SideScore(-1, -1, -1);
   }
+
+  /** Material position of both sides entering a given round. */
+  private record Checkpoint(int round, SideScore candidate, SideScore opponent) {}
 
   /** One row of the results CSV. */
   private record GameOutcome(
@@ -313,7 +370,8 @@ public final class PtvEvalRunner {
       int rounds,
       long durationMs,
       SideScore candidateScore,
-      SideScore opponentScore) {
+      SideScore opponentScore,
+      List<Checkpoint> checkpoints) {
 
     boolean candidateWon() {
       return outcome.equals("VICTORY") && winningAlliance.equals(candidateSide);
@@ -326,7 +384,9 @@ public final class PtvEvalRunner {
     static String csvHeader() {
       return "seed,candidate_side,outcome,winning_alliance,winners,rounds,duration_ms,"
           + "candidate_won,candidate_vc,opponent_vc,candidate_prod,opponent_prod,"
-          + "candidate_units,opponent_units";
+          + "candidate_units,opponent_units,"
+          + "candidate_vc_by_round,opponent_vc_by_round,"
+          + "candidate_prod_by_round,opponent_prod_by_round";
     }
 
     String toCsvRow() {
@@ -345,7 +405,11 @@ public final class PtvEvalRunner {
           String.valueOf(candidateScore.production()),
           String.valueOf(opponentScore.production()),
           String.valueOf(candidateScore.units()),
-          String.valueOf(opponentScore.units()));
+          String.valueOf(opponentScore.units()),
+          trajectory(checkpoints, c -> c.candidate().victoryCities()),
+          trajectory(checkpoints, c -> c.opponent().victoryCities()),
+          trajectory(checkpoints, c -> c.candidate().production()),
+          trajectory(checkpoints, c -> c.opponent().production()));
     }
   }
 
