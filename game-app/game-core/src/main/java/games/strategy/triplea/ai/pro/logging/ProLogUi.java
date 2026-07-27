@@ -57,13 +57,15 @@ public final class ProLogUi {
   }
 
   public static void notifyStartOfRound(final int round, final String name) {
-    if (settingsWindow == null) {
-      return;
-    }
+    // De-duplication moved ahead of the window check so that headless runs, which never have a
+    // settings window, still get exactly one marker per player-turn rather than one per call site.
     if (round != currentRound || !name.equals(currentName)) {
       currentRound = round;
       currentName = name;
-      settingsWindow.notifyNewRound(round, name);
+      ProLogger.headlessRoundMarker(round, name);
+      if (settingsWindow != null) {
+        settingsWindow.notifyNewRound(round, name);
+      }
     }
   }
 }

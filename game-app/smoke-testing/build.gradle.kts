@@ -37,6 +37,11 @@ tasks.register<JavaExec>("ptvEval") {
     (project.findProperty("ptvEvalCores") as String?)?.let { cores ->
         jvmArgs("-XX:ActiveProcessorCount=$cores")
     }
+    // -PptvEvalAiLog=FINER captures ProAI's own decision log (purchase efficiencies, territory
+    // prioritisation). FINE gives phase headers only; FINEST is unreadably large.
+    (project.findProperty("ptvEvalAiLog") as String?)?.let { level ->
+        jvmArgs("-Dtriplea.ai.pro.headlessLogLevel=$level")
+    }
     args = (project.findProperty("ptvEvalArgs") as String?)?.split(" ")?.filter { it.isNotBlank() }
         ?: listOf("--games", "2", "--side", "axis", "--max-rounds", "20")
 }
