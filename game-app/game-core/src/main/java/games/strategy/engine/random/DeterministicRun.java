@@ -118,15 +118,27 @@ public final class DeterministicRun {
   /**
    * Installs a simulation-scoped policy stream on this thread. Always pair with {@link #endScope}.
    */
-  public static void beginScope(final long seed) {
-    if (enabled) {
-      scopedPolicyRandom.set(new SplittableRandom(mix64(seed ^ 0x9E3779B97F4A7C15L)));
+  public static SplittableRandom beginScope(final long seed) {
+    if (!enabled) {
+      return null;
     }
+    // Returns the previous value rather than assuming there was none: endScope's remove() would
+    // destroy an enclosing scope, and every draw after it would silently fall back to the shared
+    // global stream -- reintroducing exactly the cross-thread ordering dependence this scoping
+    // exists to remove. Nesting is not obviously reachable today, but the failure is invisible and
+    // the guard is free.
+    final SplittableRandom previous = scopedPolicyRandom.get();
+    scopedPolicyRandom.set(new SplittableRandom(mix64(seed ^ 0x9E3779B97F4A7C15L)));
+    return previous;
   }
 
   /** Removes the simulation-scoped stream, restoring the shared one for this thread. */
-  public static void endScope() {
-    scopedPolicyRandom.remove();
+  public static void endScope(final SplittableRandom previous) {
+    if (previous == null) {
+      scopedPolicyRandom.remove();
+    } else {
+      scopedPolicyRandom.set(previous);
+    }
   }
 
   /**

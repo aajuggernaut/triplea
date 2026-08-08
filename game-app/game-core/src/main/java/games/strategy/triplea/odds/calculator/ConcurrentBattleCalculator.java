@@ -296,7 +296,13 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
                 + retreatWhenOnlyAirLeft
                 + "|perWorker="
                 + perWorker.stream()
-                    .map(r -> r.getResults().size() + ":" + r.getAttackerWinPercent())
+                    .map(
+                        r ->
+                            r.getResults().size()
+                                + ":"
+                                + r.getAttackerWinPercent()
+                                + "@"
+                                + r.getRunThreadName())
                     .collect(Collectors.joining(","))
                 + "  ->  win="
                 + results.getAttackerWinPercent()

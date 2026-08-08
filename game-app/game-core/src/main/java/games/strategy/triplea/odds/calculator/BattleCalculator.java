@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.SplittableRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nonnull;
 import lombok.Setter;
@@ -108,7 +109,7 @@ class BattleCalculator implements IBattleCalculator {
         final long simulationSeed = battleContext * 1_000_003L + workerIndex * 10_007L + i;
         // DummyPlayer's own policy draws must come from this simulation, not from a stream
         // shared with the other workers running concurrently.
-        DeterministicRun.beginScope(simulationSeed);
+        final SplittableRandom enclosingScope = DeterministicRun.beginScope(simulationSeed);
         try {
           final CompositeChange allChanges = new CompositeChange();
           final DummyDelegateBridge bridge =
@@ -142,10 +143,11 @@ class BattleCalculator implements IBattleCalculator {
         } finally {
           // finally, not a trailing call: a throw here would otherwise leave a stale scope
           // installed on this worker thread and silently seed the next battle from it.
-          DeterministicRun.endScope();
+          DeterministicRun.endScope(enclosingScope);
         }
       }
       aggregateResults.setTime(System.currentTimeMillis() - start);
+      aggregateResults.setRunThreadName(Thread.currentThread().getName());
       cancelled = false;
       return aggregateResults;
     } finally {

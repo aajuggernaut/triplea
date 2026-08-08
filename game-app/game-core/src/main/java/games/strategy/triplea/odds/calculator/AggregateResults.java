@@ -293,6 +293,13 @@ public class AggregateResults {
   }
 
   /** Returns the number of battles aggregated by this instance. */
+  /**
+   * Which thread produced this worker's share. Diagnostic: with a parallel range the calling thread
+   * usually takes the last chunk, and the remaining determinism failure tracks the last worker --
+   * so it matters whether that is really a thread difference or a worker difference.
+   */
+  @Getter @Setter private String runThreadName = "";
+
   public int getRollCount() {
     return results.size();
   }
