@@ -267,6 +267,32 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
                   .collect(Collectors.toList()));
       results.setTime(System.currentTimeMillis() - start);
       if (DeterministicRun.isEnabled()) {
+        // Inputs as well as outputs. The fingerprint alone proves the AI got different odds but
+        // not whether it asked a different question; comparing the arguments separates "the
+        // calculator is unreliable" from "the AI derived a different battle", which need
+        // opposite fixes.
+        DeterministicRun.recordOddsCall(
+            location.getName()
+                + "|atk="
+                + (attacker == null ? "-" : attacker.getName())
+                + "|def="
+                + (defender == null ? "-" : defender.getName())
+                + "|A="
+                + describe(attacking)
+                + "|D="
+                + describe(defending)
+                + "|B="
+                + describe(bombarding)
+                + "|runCount="
+                + runCount
+                + "|workers="
+                + workers.size()
+                + "|air="
+                + retreatWhenOnlyAirLeft
+                + "  ->  win="
+                + results.getAttackerWinPercent()
+                + " rolls="
+                + results.getRollCount());
         // Hashed on the figures the AI actually reads, not on the raw battle list: those are
         // what drive decisions, and they are stable to describe.
         long hash = Double.doubleToLongBits(results.getAttackerWinPercent());
@@ -279,6 +305,18 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
       }
       return results;
     }
+  }
+
+  /**
+   * Order-independent description of a unit collection: sorted counts of type/hits/damage. Sorted
+   * deliberately -- the caller's ordering is not something it guarantees, so including it would
+   * report noise as a difference.
+   */
+  private static String describe(final Collection<Unit> units) {
+    return units.stream()
+        .map(u -> u.getType().getName() + ":" + u.getHits() + ":" + u.getUnitDamage())
+        .sorted()
+        .collect(Collectors.joining(","));
   }
 
   public void setKeepOneAttackingLandUnit(final boolean bool) {

@@ -32,9 +32,9 @@ import org.junit.jupiter.api.Test;
  * from round 1 onward, but each probe costs ~20 minutes and only reports that a rolling hash
  * diverged. This asks the same question directly: run one battle through the pinned four-worker
  * calculator twice and compare. Seconds instead of game-minutes, and it separates the two
- * possibilities that need opposite fixes -- a differing <em>roll count</em> means the runs simulated
- * different numbers of battles (a pool or run-count-split problem), while an identical roll count
- * with differing percentages means the dice themselves are not seeded reproducibly.
+ * possibilities that need opposite fixes -- a differing <em>roll count</em> means the runs
+ * simulated different numbers of battles (a pool or run-count-split problem), while an identical
+ * roll count with differing percentages means the dice themselves are not seeded reproducibly.
  */
 class PtvOddsReproducibilityTest {
 
@@ -92,8 +92,10 @@ class PtvOddsReproducibilityTest {
   @DisplayName("the same battle simulated twice returns the same odds")
   void sameBattleGivesSameOdds() {
     final Territory where = data.getMap().getTerritoryOrNull("Ukraine");
-    final AggregateResults first = run(where, units(germans, "infantry", 8), units(russians, "infantry", 6));
-    final AggregateResults second = run(where, units(germans, "infantry", 8), units(russians, "infantry", 6));
+    final AggregateResults first =
+        run(where, units(germans, "infantry", 8), units(russians, "infantry", 6));
+    final AggregateResults second =
+        run(where, units(germans, "infantry", 8), units(russians, "infantry", 6));
 
     // Reported before the percentages: which of these two fails tells you which bug it is.
     assertThat(
@@ -114,7 +116,8 @@ class PtvOddsReproducibilityTest {
     attackers.addAll(units(germans, "armour", 3));
     final List<Unit> defenders = units(russians, "infantry", 6);
 
-    final AggregateResults inOrder = run(where, new ArrayList<>(attackers), new ArrayList<>(defenders));
+    final AggregateResults inOrder =
+        run(where, new ArrayList<>(attackers), new ArrayList<>(defenders));
 
     // Same set, different sequence. The AI builds these collections from hash-ordered maps keyed by
     // Unit, so their order is not something it controls or guarantees. If the simulation is
@@ -141,8 +144,7 @@ class PtvOddsReproducibilityTest {
     for (int i = 0; i < 20; i++) {
       final AggregateResults repeat =
           run(where, units(germans, "armour", 5), units(russians, "infantry", 5));
-      assertThat(
-          "attempt " + i + " diverged", repeat.getRollCount(), is(reference.getRollCount()));
+      assertThat("attempt " + i + " diverged", repeat.getRollCount(), is(reference.getRollCount()));
       assertThat(
           "attempt " + i + " diverged",
           repeat.getAttackerWinPercent(),

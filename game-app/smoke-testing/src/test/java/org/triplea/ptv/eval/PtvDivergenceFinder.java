@@ -73,6 +73,7 @@ public final class PtvDivergenceFinder {
       }
       log.info("Wrote {} steps to {}", states.size(), out.toAbsolutePath());
       reportOffThreadUnitIds();
+      DeterministicRun.flushOddsDump();
       return;
     }
 

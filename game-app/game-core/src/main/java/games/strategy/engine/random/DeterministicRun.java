@@ -73,10 +73,61 @@ public final class DeterministicRun {
   // agree on the board but disagree here have a non-reproducible calculator, which is invisible
   // from the board until it finally flips a decision several rounds later.
   private static final AtomicLong oddsCalls = new AtomicLong();
+  private static final Object oddsDumpLock = new Object();
+  private static final java.io.PrintWriter oddsDump = openOddsDump();
+
+  private static java.io.PrintWriter openOddsDump() {
+    final String path = System.getProperty("triplea.ai.ptv.oddsDump");
+    if (path == null || path.isBlank()) {
+      return null;
+    }
+    try {
+      return new java.io.PrintWriter(new java.io.BufferedWriter(new java.io.FileWriter(path)));
+    } catch (final java.io.IOException e) {
+      throw new IllegalStateException("Cannot open odds dump at " + path, e);
+    }
+  }
+
+  /** Flushes the odds dump; the JVM may exit before the buffer drains otherwise. */
+  public static void flushOddsDump() {
+    synchronized (oddsDumpLock) {
+      if (oddsDump != null) {
+        oddsDump.flush();
+      }
+    }
+  }
+
   private static final AtomicLong oddsRollingHash = new AtomicLong();
 
   private static final Object policyLock = new Object();
   private static SplittableRandom policyRandom = new SplittableRandom(0L);
+
+  // A thread-confined policy stream, installed for the duration of one battle simulation.
+  //
+  // DummyPlayer extends AbstractAi, so a simulated battle makes AbstractAi's policy draws --
+  // retreat decisions, casualty shuffles -- and those simulations run on several worker threads
+  // at once. Sharing one global sequence between them is thread-safe but not reproducible: the
+  // draws are handed out in whatever order the threads happen to arrive, so a worker sees a
+  // different value on different runs even though the totals match. That produced identical
+  // inputs and roll counts with differing win percentages.
+  //
+  // Scoping the stream to the simulation, seeded from that simulation's own seed, makes each
+  // battle's draws depend only on the battle -- not on how the workers interleaved.
+  private static final ThreadLocal<SplittableRandom> scopedPolicyRandom = new ThreadLocal<>();
+
+  /**
+   * Installs a simulation-scoped policy stream on this thread. Always pair with {@link #endScope}.
+   */
+  public static void beginScope(final long seed) {
+    if (enabled) {
+      scopedPolicyRandom.set(new SplittableRandom(mix64(seed ^ 0x9E3779B97F4A7C15L)));
+    }
+  }
+
+  /** Removes the simulation-scoped stream, restoring the shared one for this thread. */
+  public static void endScope() {
+    scopedPolicyRandom.remove();
+  }
 
   /**
    * Deliberately a machine-independent constant rather than a fraction of the core count, so that
@@ -117,6 +168,10 @@ public final class DeterministicRun {
     if (!enabled) {
       return Math.random();
     }
+    final SplittableRandom scoped = scopedPolicyRandom.get();
+    if (scoped != null) {
+      return scoped.nextDouble();
+    }
     synchronized (policyLock) {
       return policyRandom.nextDouble();
     }
@@ -127,6 +182,10 @@ public final class DeterministicRun {
     if (!enabled) {
       return ThreadLocalRandom.current().nextInt(bound);
     }
+    final SplittableRandom scoped = scopedPolicyRandom.get();
+    if (scoped != null) {
+      return scoped.nextInt(bound);
+    }
     synchronized (policyLock) {
       return policyRandom.nextInt(bound);
     }
@@ -136,6 +195,10 @@ public final class DeterministicRun {
   public static float nextFloat() {
     if (!enabled) {
       return ThreadLocalRandom.current().nextFloat();
+    }
+    final SplittableRandom scoped = scopedPolicyRandom.get();
+    if (scoped != null) {
+      return (float) scoped.nextDouble();
     }
     synchronized (policyLock) {
       return (float) policyRandom.nextDouble();
@@ -153,8 +216,13 @@ public final class DeterministicRun {
       return;
     }
     final long shuffleSeed;
-    synchronized (policyLock) {
-      shuffleSeed = policyRandom.nextLong();
+    final SplittableRandom scoped = scopedPolicyRandom.get();
+    if (scoped != null) {
+      shuffleSeed = scoped.nextLong();
+    } else {
+      synchronized (policyLock) {
+        shuffleSeed = policyRandom.nextLong();
+      }
     }
     Collections.shuffle(list, new Random(shuffleSeed));
   }
@@ -205,6 +273,20 @@ public final class DeterministicRun {
     }
     oddsCalls.incrementAndGet();
     oddsRollingHash.updateAndGet(current -> mix64(current * 31L + resultHash));
+  }
+
+  /**
+   * Appends one odds call's arguments and answer to the dump file named by {@code
+   * -Dtriplea.ai.ptv.oddsDump=<path>}. Off unless that property is set, since a full game makes
+   * tens of thousands of calls.
+   */
+  public static void recordOddsCall(final String description) {
+    if (!enabled || oddsDump == null) {
+      return;
+    }
+    synchronized (oddsDumpLock) {
+      oddsDump.println(oddsCalls.get() + " " + description);
+    }
   }
 
   public static long oddsCalls() {

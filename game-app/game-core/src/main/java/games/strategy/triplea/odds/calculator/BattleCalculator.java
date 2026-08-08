@@ -12,6 +12,7 @@ import games.strategy.engine.data.Unit;
 import games.strategy.engine.data.changefactory.ChangeFactory;
 import games.strategy.engine.framework.GameDataManager;
 import games.strategy.engine.framework.GameDataUtils;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.delegate.battle.BattleResults;
 import games.strategy.triplea.delegate.battle.BattleTracker;
 import games.strategy.triplea.delegate.battle.MustFightBattle;
@@ -104,35 +105,45 @@ class BattleCalculator implements IBattleCalculator {
           battleContextHash(
               attacker2, defender2, location2, attackingUnits, defendingUnits, bombardingUnits);
       for (int i = 0; i < runCount && !cancelled; i++) {
-        final CompositeChange allChanges = new CompositeChange();
-        final DummyDelegateBridge bridge =
-            new DummyDelegateBridge(
-                attacker2,
-                gameData,
-                allChanges,
-                attackerOrderOfLosses,
-                defenderOrderOfLosses,
-                keepOneAttackingLandUnit,
-                retreatAfterRound,
-                retreatAfterXUnitsLeft,
-                retreatWhenOnlyAirLeft,
-                tuvCalculator,
-                battleContext * 1_000_003L + workerIndex * 10_007L + i);
-        final MustFightBattle battle =
-            new MustFightBattle(location2, attacker2, gameData, battleTracker);
-        battle.setHeadless(true);
-        if (amphibious) {
-          attackingUnits.forEach(unit -> unit.setWasAmphibious(true));
+        final long simulationSeed = battleContext * 1_000_003L + workerIndex * 10_007L + i;
+        // DummyPlayer's own policy draws must come from this simulation, not from a stream
+        // shared with the other workers running concurrently.
+        DeterministicRun.beginScope(simulationSeed);
+        try {
+          final CompositeChange allChanges = new CompositeChange();
+          final DummyDelegateBridge bridge =
+              new DummyDelegateBridge(
+                  attacker2,
+                  gameData,
+                  allChanges,
+                  attackerOrderOfLosses,
+                  defenderOrderOfLosses,
+                  keepOneAttackingLandUnit,
+                  retreatAfterRound,
+                  retreatAfterXUnitsLeft,
+                  retreatWhenOnlyAirLeft,
+                  tuvCalculator,
+                  simulationSeed);
+          final MustFightBattle battle =
+              new MustFightBattle(location2, attacker2, gameData, battleTracker);
+          battle.setHeadless(true);
+          if (amphibious) {
+            attackingUnits.forEach(unit -> unit.setWasAmphibious(true));
+          }
+          battle.setUnits(
+              defendingUnits, attackingUnits, bombardingUnits, defender2, territoryEffects2);
+          bridge.setBattle(battle);
+          battle.fight(bridge);
+          aggregateResults.addResult(new BattleResults(battle, gameData));
+          // restore the game to its original state
+          gameData.performChange(allChanges.invert());
+          battleTracker.clear();
+          battleTracker.clearBattleRecords();
+        } finally {
+          // finally, not a trailing call: a throw here would otherwise leave a stale scope
+          // installed on this worker thread and silently seed the next battle from it.
+          DeterministicRun.endScope();
         }
-        battle.setUnits(
-            defendingUnits, attackingUnits, bombardingUnits, defender2, territoryEffects2);
-        bridge.setBattle(battle);
-        battle.fight(bridge);
-        aggregateResults.addResult(new BattleResults(battle, gameData));
-        // restore the game to its original state
-        gameData.performChange(allChanges.invert());
-        battleTracker.clear();
-        battleTracker.clearBattleRecords();
       }
       aggregateResults.setTime(System.currentTimeMillis() - start);
       cancelled = false;
