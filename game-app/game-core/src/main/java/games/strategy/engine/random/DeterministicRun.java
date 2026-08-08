@@ -69,6 +69,12 @@ public final class DeterministicRun {
   private static final AtomicLong offThreadUnitIds = new AtomicLong();
   private static volatile String firstOffThreadTrace = null;
 
+  // Rolling fingerprint of every odds estimate handed to the AI, in call order. Two runs that
+  // agree on the board but disagree here have a non-reproducible calculator, which is invisible
+  // from the board until it finally flips a decision several rounds later.
+  private static final AtomicLong oddsCalls = new AtomicLong();
+  private static final AtomicLong oddsRollingHash = new AtomicLong();
+
   private static final Object policyLock = new Object();
   private static SplittableRandom policyRandom = new SplittableRandom(0L);
 
@@ -87,6 +93,8 @@ public final class DeterministicRun {
     baseSeed = seed;
     unitIdSequence.set(0L);
     owningThread = Thread.currentThread();
+    oddsCalls.set(0L);
+    oddsRollingHash.set(0L);
     offThreadUnitIds.set(0L);
     firstOffThreadTrace = null;
     synchronized (policyLock) {
@@ -185,6 +193,26 @@ public final class DeterministicRun {
    */
   public static long unitIdsIssued() {
     return unitIdSequence.get();
+  }
+
+  /**
+   * Folds one odds estimate into the rolling fingerprint. Called on the game thread after the
+   * parallel workers have been aggregated, so the fold order is the AI's call order.
+   */
+  public static void recordOddsResult(final long resultHash) {
+    if (!enabled) {
+      return;
+    }
+    oddsCalls.incrementAndGet();
+    oddsRollingHash.updateAndGet(current -> mix64(current * 31L + resultHash));
+  }
+
+  public static long oddsCalls() {
+    return oddsCalls.get();
+  }
+
+  public static long oddsHash() {
+    return oddsRollingHash.get();
   }
 
   /** How many unit ids were issued off the enabling thread. Non-zero means the ids race. */

@@ -266,6 +266,17 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
                   .flatMap(Collection::stream)
                   .collect(Collectors.toList()));
       results.setTime(System.currentTimeMillis() - start);
+      if (DeterministicRun.isEnabled()) {
+        // Hashed on the figures the AI actually reads, not on the raw battle list: those are
+        // what drive decisions, and they are stable to describe.
+        long hash = Double.doubleToLongBits(results.getAttackerWinPercent());
+        hash = hash * 31L + Double.doubleToLongBits(results.getDefenderWinPercent());
+        hash = hash * 31L + Double.doubleToLongBits(results.getAverageAttackingUnitsLeft());
+        hash = hash * 31L + Double.doubleToLongBits(results.getAverageDefendingUnitsLeft());
+        hash = hash * 31L + Double.doubleToLongBits(results.getAverageBattleRoundsFought());
+        hash = hash * 31L + results.getRollCount();
+        DeterministicRun.recordOddsResult(hash);
+      }
       return results;
     }
   }

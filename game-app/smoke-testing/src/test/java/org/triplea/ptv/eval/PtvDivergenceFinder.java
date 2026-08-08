@@ -190,7 +190,14 @@ public final class PtvDivergenceFinder {
             new StepState(
                 round,
                 stepIndex,
-                label + "  [idsIssued=" + DeterministicRun.unitIdsIssued() + "]",
+                label
+                    + "  [idsIssued="
+                    + DeterministicRun.unitIdsIssued()
+                    + " oddsCalls="
+                    + DeterministicRun.oddsCalls()
+                    + " oddsHash="
+                    + DeterministicRun.oddsHash()
+                    + "]",
                 fingerprint(data)));
       }
       return states;
