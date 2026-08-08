@@ -12,6 +12,8 @@ import games.strategy.engine.display.IDisplay;
 import games.strategy.engine.history.DelegateHistoryWriter;
 import games.strategy.engine.history.IDelegateHistoryWriter;
 import games.strategy.engine.player.Player;
+import games.strategy.engine.random.DeterministicRun;
+import games.strategy.engine.random.IRandomSource;
 import games.strategy.engine.random.IRandomStats;
 import games.strategy.engine.random.PlainRandomSource;
 import games.strategy.triplea.ResourceLoader;
@@ -28,7 +30,7 @@ import org.triplea.sound.ISound;
 
 /** Delegate bridge implementation with minimum valid behavior. */
 public class DummyDelegateBridge implements IDelegateBridge {
-  private final PlainRandomSource randomSource = new PlainRandomSource();
+  private final IRandomSource randomSource;
   private final IDisplay display = new HeadlessDisplay();
   private final ISound soundChannel = new HeadlessSoundChannel();
   private final DummyPlayer attackingPlayer;
@@ -50,7 +52,12 @@ public class DummyDelegateBridge implements IDelegateBridge {
       final int retreatAfterRound,
       final int retreatAfterXUnitsLeft,
       final boolean retreatWhenOnlyAirLeft,
-      final TuvCostsCalculator tuvCalculator) {
+      final TuvCostsCalculator tuvCalculator,
+      final long simulationContext) {
+    randomSource =
+        DeterministicRun.isEnabled()
+            ? new PlainRandomSource(DeterministicRun.seedFor(simulationContext))
+            : new PlainRandomSource();
     attackingPlayer =
         new DummyPlayer(
             this,

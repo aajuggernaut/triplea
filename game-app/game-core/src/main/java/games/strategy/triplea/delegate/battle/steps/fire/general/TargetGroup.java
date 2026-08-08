@@ -18,7 +18,7 @@ import org.triplea.java.collections.CollectionUtils;
 
 /** Group of firing units and their targets. */
 @Getter(AccessLevel.PACKAGE)
-class TargetGroup {
+public class TargetGroup {
 
   private final Set<UnitType> firingUnitTypes;
   private final Set<UnitType> targetUnitTypes;

@@ -6,6 +6,7 @@ import games.strategy.engine.data.GameTestUtils;
 import games.strategy.engine.data.Territory;
 import games.strategy.engine.framework.ServerGame;
 import games.strategy.engine.framework.startup.ui.PlayerTypes;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.delegate.EndRoundDelegate;
 import games.strategy.triplea.delegate.Matches;
@@ -16,16 +17,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.ToDoubleFunction;
 import java.util.function.ToIntFunction;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.java.collections.CollectionUtils;
 
@@ -46,17 +51,27 @@ import org.triplea.java.collections.CollectionUtils;
  * games where the loser was reduced to zero units. Games are therefore scored on material position
  * (victory cities, production, units held per side).
  *
- * <p><b>Position is sampled over time, not just at the end.</b> Endpoint-only scoring saturates: a
- * stock-vs-stock Axis loses with 0.9 of 21 victory cities, and a run that ends 0-21 cannot show
- * whether the collapse happened by round 10 or round 30. Material is therefore recorded at each of
- * {@link #CHECKPOINT_ROUNDS}, so an improved bot can register as collapsing later even when the
- * final score is unchanged.
+ * <p><b>The run is scored at {@value #PRIMARY_METRIC_ROUND}, not at the end.</b> Endpoint scoring
+ * saturates and is nearly all noise: a stock Axis ends six games in eight at exactly zero victory
+ * cities and one at twenty, giving an SD of 6.9 around a mean of 3.0. Detecting a +2 VC improvement
+ * there would need ~191 games per arm; at round 15 it needs ~26. Material is recorded at every
+ * fifth round as well, so a bot that merely collapses later still registers as different.
+ *
+ * <p><b>Runs are reproducible, but only because {@code --deterministic} is on by default.</b>
+ * Seeding the game's dice alone is not enough: the AI's own battle simulations drew from unseeded
+ * random sources and were split across a core-count-dependent number of workers, so replaying seeds
+ * 2000-2007 on 6 cores and then on 8 gave different results -- seed 2003 inverted outright. {@link
+ * games.strategy.engine.random.DeterministicRun} pins those sources, plus the random unit ids that
+ * made every {@code HashSet<Unit>} iterate differently each run. This matters for more than
+ * tidiness: with it, a patched-vs-stock comparison is <em>paired</em>, because both arms play an
+ * identical game until the patch first changes a decision.
  *
  * <p><b>Do not run two instances of this in one JVM.</b> {@code ProAi} holds a {@code static final
  * ConcurrentBattleCalculator} shared by every ProAi instance, and rebinds its game data in {@code
  * prepareData}. Concurrent games would simulate battles against each other's board state. Games are
  * therefore run sequentially here; to use more cores, launch several processes with disjoint {@code
- * --seeds} and merge the CSVs.
+ * --seeds} and merge the CSVs. {@code --deterministic} pins the battle calculator's pool to a fixed
+ * size rather than serialising it, so throughput is unchanged.
  */
 @Slf4j
 public final class PtvEvalRunner {
@@ -65,8 +80,26 @@ public final class PtvEvalRunner {
   private static final String AXIS = "Axis";
   private static final String ALLIES = "Allies";
 
-  /** Rounds at which material position is sampled mid-game. */
-  private static final List<Integer> CHECKPOINT_ROUNDS = List.of(5, 10, 15, 20, 25, 30);
+  /**
+   * The round the run is scored on.
+   *
+   * <p>Not the endpoint, which is close to useless: a stock Axis ends 6 games in 8 at exactly zero
+   * victory cities and one at twenty, so its SD (6.9) dwarfs its mean (3.0) and detecting a +2 VC
+   * improvement would take ~191 games per arm. Round 15 needs ~26. Round 5 is tighter still but
+   * correlates with the endpoint at r = 0.01 -- nothing has diverged that early, so it measures
+   * nothing. Round 20 predicts slightly better than 15 but costs ~3x the games. Full working in
+   * {@code notes/003-measurement-noise-floor.md} of the companion repo.
+   */
+  private static final int PRIMARY_METRIC_ROUND = 15;
+
+  /**
+   * Rounds at which material position is sampled mid-game: every fifth round the run reaches.
+   * Derived rather than fixed so that shortening {@code --max-rounds} does not silently leave
+   * checkpoints that can never fire.
+   */
+  private static List<Integer> checkpointsFor(final int maxRounds) {
+    return IntStream.rangeClosed(1, maxRounds / 5).map(i -> i * 5).boxed().toList();
+  }
 
   private PtvEvalRunner() {}
 
@@ -78,6 +111,16 @@ public final class PtvEvalRunner {
     final PlayerTypes.Type baseline = bot(options.baseline);
     final List<String> sides = options.sides();
     final List<Long> seeds = options.seeds();
+    final List<Integer> checkpointRounds = checkpointsFor(options.maxRounds);
+
+    if (options.maxRounds < PRIMARY_METRIC_ROUND) {
+      log.warn(
+          "--max-rounds {} is below the primary metric round {}, so this run cannot be scored on"
+              + " it. Raise --max-rounds to at least {}.",
+          options.maxRounds,
+          PRIMARY_METRIC_ROUND,
+          PRIMARY_METRIC_ROUND + 1);
+    }
 
     Files.createDirectories(options.out.toAbsolutePath().getParent());
     final List<GameOutcome> outcomes = new ArrayList<>();
@@ -88,23 +131,35 @@ public final class PtvEvalRunner {
       csv.println("# map=WW2 Path to Victory v6.4 (commit 45354ca)");
       csv.println("# candidate=" + options.candidate + " baseline=" + options.baseline);
       csv.println("# maxRounds=" + options.maxRounds + " games=" + (seeds.size() * sides.size()));
-      csv.println("# checkpoints=" + CHECKPOINT_ROUNDS);
+      csv.println("# checkpoints=" + checkpointRounds);
+      csv.println("# primaryMetricRound=" + PRIMARY_METRIC_ROUND);
+      csv.println("# deterministic=" + options.deterministic);
       csv.println(GameOutcome.csvHeader());
       csv.flush();
 
       for (final String side : sides) {
         for (final long seed : seeds) {
           final GameOutcome outcome =
-              runOneGame(seed, side, candidate, baseline, options.maxRounds);
+              runOneGame(
+                  seed,
+                  side,
+                  candidate,
+                  baseline,
+                  options.maxRounds,
+                  options.deterministic,
+                  checkpointRounds);
           outcomes.add(outcome);
           csv.println(outcome.toCsvRow());
           csv.flush();
           log.info(
-              "seed={} candidateSide={} -> {} | VC {}v{} prod {}v{} units {}v{} | VC path {} | "
-                  + "{} rounds, {} ms",
+              "seed={} candidateSide={} -> {} | PRIMARY r{} VC {} share {}% | "
+                  + "VC {}v{} prod {}v{} units {}v{} | VC path {} | {} rounds, {} ms",
               seed,
               side,
               outcome.outcome(),
+              PRIMARY_METRIC_ROUND,
+              outcome.primaryVictoryCities(),
+              fmt(outcome.primaryProductionShare()),
               outcome.candidateScore().victoryCities(),
               outcome.opponentScore().victoryCities(),
               outcome.candidateScore().production(),
@@ -130,13 +185,20 @@ public final class PtvEvalRunner {
       final String candidateSide,
       final PlayerTypes.Type candidate,
       final PlayerTypes.Type baseline,
-      final int maxRounds) {
+      final int maxRounds,
+      final boolean deterministic,
+      final List<Integer> checkpointRounds) {
 
     final long startNanos = System.nanoTime();
     final String opponentSide = candidateSide.equals(AXIS) ? ALLIES : AXIS;
     final List<Checkpoint> checkpoints = new ArrayList<>();
     ServerGame game = null;
     try {
+      // Must be enabled before the map is parsed: unit ids are drawn from the seeded sequence, and
+      // the starting units are created during parsing.
+      if (deterministic) {
+        DeterministicRun.enable(seed);
+      }
       game =
           GameTestUtils.setUpGameWithAis(
               PTV_XML, data -> assignTypes(data, candidateSide, candidate, baseline));
@@ -151,7 +213,7 @@ public final class PtvEvalRunner {
         if (round != lastRound) {
           lastRound = round;
           // Sampled on entering the round, so the value reflects the position going into it.
-          if (CHECKPOINT_ROUNDS.contains(round) && round <= maxRounds) {
+          if (checkpointRounds.contains(round) && round <= maxRounds) {
             checkpoints.add(
                 new Checkpoint(
                     round, scoreAlliance(data, candidateSide), scoreAlliance(data, opponentSide)));
@@ -203,6 +265,9 @@ public final class PtvEvalRunner {
         // clears its game data, which would otherwise leak into the next game's simulations.
         game.stopGame();
       }
+      // Cleared per game rather than per run, so the unit-id sequence restarts from the same point
+      // for every seed instead of carrying over from whatever the previous game consumed.
+      DeterministicRun.disable();
     }
   }
 
@@ -298,14 +363,40 @@ public final class PtvEvalRunner {
           mean(scored, o -> o.candidateScore().production()),
           mean(scored, o -> o.opponentScore().production()));
 
+      // The primary metric, with its own precision. Printed together on purpose: three patches in
+      // a row were declared "no effect" from runs that could not have resolved any effect, because
+      // nobody worked out what the sample size could detect. Now the run says so itself.
+      final Stats vc = statsAt(scored, PRIMARY_METRIC_ROUND, c -> c.candidate().victoryCities());
+      final Stats share = statsAt(scored, PRIMARY_METRIC_ROUND, PtvEvalRunner::productionShare);
+      if (vc.n() > 0) {
+        log.info(
+            "  PRIMARY (round {}): VC mean {} SD {} SE {} | prod share {}% SD {} SE {} | n={}",
+            PRIMARY_METRIC_ROUND,
+            fmt(vc.mean()),
+            fmt(vc.sd()),
+            fmt(vc.standardError()),
+            fmt(share.mean()),
+            fmt(share.sd()),
+            fmt(share.standardError()),
+            vc.n());
+        log.info(
+            "  smallest difference this many games could detect (80% power, a=.05):"
+                + " {} VC / {} points of production share."
+                + " A measured gap smaller than that is not evidence of anything.",
+            fmt(vc.minimumDetectableDifference()), fmt(share.minimumDetectableDifference()));
+      } else {
+        log.warn(
+            "  PRIMARY (round {}): no games reached it -- nothing to score.", PRIMARY_METRIC_ROUND);
+      }
+
       // The collapse curve: where the candidate's position stood entering each checkpoint round.
       // Two bots with the same final score can differ sharply here, which is the point.
       final StringBuilder curve = new StringBuilder();
-      for (final int round : CHECKPOINT_ROUNDS) {
+      for (final int round : checkpointsFor(options.maxRounds)) {
         final OptionalDouble avg =
             scored.stream()
                 .map(o -> checkpointAt(o, round))
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .mapToInt(c -> c.candidate().victoryCities())
                 .average();
         if (avg.isPresent()) {
@@ -328,6 +419,61 @@ public final class PtvEvalRunner {
 
   private static Checkpoint checkpointAt(final GameOutcome outcome, final int round) {
     return outcome.checkpoints().stream().filter(c -> c.round() == round).findFirst().orElse(null);
+  }
+
+  /**
+   * The candidate's share of total production, which is more comparable across games than its raw
+   * production: a game where both sides grew is not the same as one where the candidate pulled
+   * ahead, and the raw figure cannot tell them apart.
+   */
+  private static double productionShare(final Checkpoint checkpoint) {
+    final int total = checkpoint.candidate().production() + checkpoint.opponent().production();
+    return total == 0 ? 0 : 100.0 * checkpoint.candidate().production() / total;
+  }
+
+  private static Stats statsAt(
+      final List<GameOutcome> outcomes, final int round, final ToDoubleFunction<Checkpoint> value) {
+    final double[] values =
+        outcomes.stream()
+            .map(o -> checkpointAt(o, round))
+            .filter(Objects::nonNull)
+            .mapToDouble(value)
+            .toArray();
+    return Stats.of(values);
+  }
+
+  private static String fmt(final double value) {
+    return String.format(Locale.ROOT, "%.2f", value);
+  }
+
+  /** Sample mean and spread, plus what a sample that size can actually resolve. */
+  private record Stats(double mean, double sd, int n) {
+
+    static Stats of(final double[] values) {
+      if (values.length == 0) {
+        return new Stats(Double.NaN, Double.NaN, 0);
+      }
+      final double mean = Arrays.stream(values).average().orElse(Double.NaN);
+      if (values.length == 1) {
+        return new Stats(mean, Double.NaN, 1);
+      }
+      final double sumSquares =
+          Arrays.stream(values).map(v -> (v - mean) * (v - mean)).sum() / (values.length - 1);
+      return new Stats(mean, Math.sqrt(sumSquares), values.length);
+    }
+
+    double standardError() {
+      return sd / Math.sqrt(n);
+    }
+
+    /**
+     * The smallest true difference this sample size would detect 80% of the time at a = .05, two
+     * sided, comparing two arms of {@code n} games. Rearranged from the usual {@code n = 16s^2/D^2}
+     * to {@code D = 4s/sqrt(n)}.
+     */
+    double minimumDetectableDifference() {
+      return 4 * sd / Math.sqrt(n);
+    }
   }
 
   private static String mean(final List<GameOutcome> outcomes, final ToIntFunction<GameOutcome> f) {
@@ -383,9 +529,25 @@ public final class PtvEvalRunner {
       return candidateScore.victoryCities() > opponentScore.victoryCities();
     }
 
+    /**
+     * The primary metric, or -1 if the game ended before reaching {@link #PRIMARY_METRIC_ROUND}.
+     */
+    int primaryVictoryCities() {
+      final Checkpoint c = checkpointAt(this, PRIMARY_METRIC_ROUND);
+      return c == null ? -1 : c.candidate().victoryCities();
+    }
+
+    double primaryProductionShare() {
+      final Checkpoint c = checkpointAt(this, PRIMARY_METRIC_ROUND);
+      return c == null ? -1 : productionShare(c);
+    }
+
     static String csvHeader() {
+      // primary_* are duplicated out of the trajectory columns on purpose: they are what the run is
+      // scored on, and every consumer otherwise has to re-parse "5:9;10:8;15:6" to find them.
       return "seed,candidate_side,outcome,winning_alliance,winners,rounds,duration_ms,"
-          + "candidate_won,candidate_vc,opponent_vc,candidate_prod,opponent_prod,"
+          + "candidate_won,primary_vc,primary_prod_share,"
+          + "candidate_vc,opponent_vc,candidate_prod,opponent_prod,"
           + "candidate_units,opponent_units,"
           + "candidate_vc_by_round,opponent_vc_by_round,"
           + "candidate_prod_by_round,opponent_prod_by_round";
@@ -402,6 +564,8 @@ public final class PtvEvalRunner {
           String.valueOf(rounds),
           String.valueOf(durationMs),
           String.valueOf(candidateWon()),
+          String.valueOf(primaryVictoryCities()),
+          String.format(Locale.ROOT, "%.2f", primaryProductionShare()),
           String.valueOf(candidateScore.victoryCities()),
           String.valueOf(opponentScore.victoryCities()),
           String.valueOf(candidateScore.production()),
@@ -421,9 +585,12 @@ public final class PtvEvalRunner {
     private long seedStart = 1000L;
     private List<Long> explicitSeeds = null;
     private String side = "both";
-    private int maxRounds = 100;
     private String candidate = "pro";
     private String baseline = "pro";
+    private boolean deterministic = true;
+    // 16, not 100: the run is scored at round 15, and playing on to 35 doubled the cost of a game
+    // to reach an endpoint whose noise floor swallows any plausible effect.
+    private int maxRounds = 16;
     private Path out = Path.of("build", "ptv-eval", "results.csv");
 
     static Options parse(final String[] args) {
@@ -446,6 +613,7 @@ public final class PtvEvalRunner {
           case "--max-rounds" -> o.maxRounds = Integer.parseInt(value);
           case "--candidate" -> o.candidate = value;
           case "--baseline" -> o.baseline = value;
+          case "--deterministic" -> o.deterministic = Boolean.parseBoolean(value);
           case "--out" -> o.out = Path.of(value);
           default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
         }

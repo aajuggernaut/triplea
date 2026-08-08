@@ -10,6 +10,7 @@ import games.strategy.engine.data.Resource;
 import games.strategy.engine.data.Territory;
 import games.strategy.engine.data.Unit;
 import games.strategy.engine.data.UnitType;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.UnitUtils;
 import games.strategy.triplea.ai.pro.ProData;
@@ -60,14 +61,21 @@ public final class ProPurchaseUtils {
     }
     final Map<ProPurchaseOption, Double> purchasePercentages = new LinkedHashMap<>();
     double upperBound = 0.0;
-    for (final ProPurchaseOption ppo : purchaseEfficiencies.keySet()) {
+    // Sorted, because callers pass a HashMap and ProPurchaseOption does not override hashCode:
+    // its keys therefore come out in identity-hash order, which differs on every run. That decides
+    // which option each slice of the 0-100 range belongs to, so an unsorted walk makes the same
+    // random draw buy a different unit each run. Sorting leaves each option's probability mass
+    // unchanged -- only the arbitrary assignment of options to slices becomes stable.
+    final List<ProPurchaseOption> options = new ArrayList<>(purchaseEfficiencies.keySet());
+    options.sort(Comparator.comparing(ppo -> ppo.getUnitType().getName()));
+    for (final ProPurchaseOption ppo : options) {
       final double chance = purchaseEfficiencies.get(ppo) / totalEfficiency * 100;
       upperBound += chance;
       purchasePercentages.put(ppo, upperBound);
       ProLogger.trace(
           ppo.getUnitType().getName() + ", probability=" + chance + ", upperBound=" + upperBound);
     }
-    final double randomNumber = Math.random() * 100;
+    final double randomNumber = DeterministicRun.nextDouble() * 100;
     ProLogger.trace("Random number: " + randomNumber);
     for (final ProPurchaseOption ppo : purchasePercentages.keySet()) {
       if (randomNumber <= purchasePercentages.get(ppo)) {

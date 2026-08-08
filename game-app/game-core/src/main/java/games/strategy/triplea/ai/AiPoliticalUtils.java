@@ -4,6 +4,7 @@ import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.GameState;
 import games.strategy.engine.data.RelationshipType;
 import games.strategy.engine.data.Resource;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.attachments.ICondition;
 import games.strategy.triplea.attachments.PoliticalActionAttachment;
@@ -55,21 +56,21 @@ public final class AiPoliticalUtils {
       if (warActions.contains(nextAction)) {
         continue;
       }
-      if (goesTowardsWar(nextAction, gamePlayer, data) && Math.random() < .5) {
+      if (goesTowardsWar(nextAction, gamePlayer, data) && DeterministicRun.nextDouble() < .5) {
         continue;
       }
-      if (awayFromAlly(nextAction, gamePlayer, data) && Math.random() < .9) {
+      if (awayFromAlly(nextAction, gamePlayer, data) && DeterministicRun.nextDouble() < .9) {
         continue;
       }
       if (isFree(nextAction)) {
         acceptableActions.add(nextAction);
       } else if (CollectionUtils.countMatches(validActions, politicalActionHasNoResourceCost())
           > 1) {
-        if (Math.random() < .9 && isAcceptableCost(nextAction, gamePlayer, data)) {
+        if (DeterministicRun.nextDouble() < .9 && isAcceptableCost(nextAction, gamePlayer, data)) {
           acceptableActions.add(nextAction);
         }
       } else {
-        if (Math.random() < .4 && isAcceptableCost(nextAction, gamePlayer, data)) {
+        if (DeterministicRun.nextDouble() < .4 && isAcceptableCost(nextAction, gamePlayer, data)) {
           acceptableActions.add(nextAction);
         }
       }

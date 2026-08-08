@@ -23,7 +23,20 @@ public final class PlainRandomSource implements IRandomSource {
   /// the lock when not under contention is close to free.
   ///
   @GuardedBy("lock")
-  private final SplittableRandom random = new SplittableRandom();
+  private final SplittableRandom random;
+
+  /** A self-seeding source: what normal play uses. */
+  public PlainRandomSource() {
+    random = new SplittableRandom();
+  }
+
+  /**
+   * A source seeded explicitly, so that a run can be replayed. Used by headless evaluation via
+   * {@link DeterministicRun}; the generator is otherwise identical, so dice distributions match.
+   */
+  public PlainRandomSource(final long seed) {
+    random = new SplittableRandom(seed);
+  }
 
   @Override
   public int[] getRandom(final int max, final int count, final String annotation) {

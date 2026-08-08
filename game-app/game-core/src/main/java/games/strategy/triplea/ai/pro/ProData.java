@@ -15,6 +15,7 @@ import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.delegate.Matches;
 import games.strategy.triplea.util.TuvCostsCalculator;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -52,19 +53,25 @@ public final class ProData {
   private GamePlayer player;
 
   /**
-   * Whether PTV-specific behaviour is enabled. False for stock ProAi and FastAi, true for {@link
-   * games.strategy.triplea.ai.pro.PtvProAi}. This is what lets the evaluation harness run a patched
-   * bot against a stock one inside a single game, which is the only way to attribute a change to
-   * the patch rather than to the map or the dice.
+   * The PTV-specific behaviours enabled for this bot. Empty for stock ProAi and FastAi; for {@link
+   * games.strategy.triplea.ai.pro.PtvProAi} it is whatever {@link PtvFeature#selected()} says,
+   * which is everything unless a run narrowed it. This is what lets the evaluation harness run a
+   * patched bot against a stock one inside a single game, which is the only way to attribute a
+   * change to the patch rather than to the map or the dice.
    */
-  private final boolean ptvFeatures;
+  private final Set<PtvFeature> ptvFeatures;
 
   public ProData() {
     this(false);
   }
 
   public ProData(final boolean ptvFeatures) {
-    this.ptvFeatures = ptvFeatures;
+    this.ptvFeatures = ptvFeatures ? PtvFeature.selected() : EnumSet.noneOf(PtvFeature.class);
+  }
+
+  /** Whether one specific PTV behaviour is enabled. */
+  public boolean isPtvFeature(final PtvFeature feature) {
+    return ptvFeatures.contains(feature);
   }
 
   public void initialize(final AbstractProAi proAi) {
@@ -111,7 +118,9 @@ public final class ProData {
     // Recomputed every turn rather than cached: marginal objective value depends on who currently
     // holds what, so it changes as the board does.
     objectiveValues =
-        ptvFeatures ? ProObjectiveValueUtils.findObjectiveValues(data, player) : Map.of();
+        isPtvFeature(PtvFeature.OBJECTIVE_VALUE)
+            ? ProObjectiveValueUtils.findObjectiveValues(data, player)
+            : Map.of();
   }
 
   private static Map<Unit, Territory> newUnitTerritoryMap(final GameState data) {

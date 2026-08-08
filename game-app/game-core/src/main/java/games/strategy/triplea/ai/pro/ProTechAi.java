@@ -8,6 +8,7 @@ import games.strategy.engine.data.Route;
 import games.strategy.engine.data.TechnologyFrontier;
 import games.strategy.engine.data.Territory;
 import games.strategy.engine.data.Unit;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.Properties;
 import games.strategy.triplea.ai.pro.util.ProMatches;
@@ -29,7 +30,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
 import javax.annotation.Nullable;
 import org.triplea.java.PredicateBuilder;
@@ -57,16 +57,15 @@ final class ProTechAi {
     // If the token was not used, set the token num -1
     final int techTokensQuantity =
         techTokensOptional.map(resource -> player.getResources().getQuantity(resource)).orElse(-1);
-    final ThreadLocalRandom localRandom = ThreadLocalRandom.current();
     int tokensToBuy = 0;
-    if (!capDanger && techTokensQuantity < 3 && pusRemaining > localRandom.nextInt(160)) {
+    if (!capDanger && techTokensQuantity < 3 && pusRemaining > DeterministicRun.nextInt(160)) {
       tokensToBuy = 1;
     }
     if (techTokensQuantity > 0 || tokensToBuy > 0) {
       final List<TechnologyFrontier> cats = TechAdvance.getPlayerTechCategories(player);
       // retaining 65% chance of choosing land advances using basic ww2v3 model.
       if (data.getTechnologyFrontier().isEmpty()) {
-        if (localRandom.nextFloat() > 0.35) {
+        if (DeterministicRun.nextFloat() > 0.35) {
           techDelegate.rollTech(techTokensQuantity + tokensToBuy, cats.get(1), tokensToBuy, null);
         } else {
           techDelegate.rollTech(techTokensQuantity + tokensToBuy, cats.get(0), tokensToBuy, null);
@@ -74,7 +73,7 @@ final class ProTechAi {
       } else {
         techDelegate.rollTech(
             techTokensQuantity + tokensToBuy,
-            cats.get(localRandom.nextInt(cats.size())),
+            cats.get(DeterministicRun.nextInt(cats.size())),
             tokensToBuy,
             null);
       }

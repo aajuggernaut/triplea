@@ -3,6 +3,7 @@ package games.strategy.triplea.ai.pro;
 import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.RelationshipType;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.ai.AiPoliticalUtils;
 import games.strategy.triplea.ai.pro.data.ProTerritory;
 import games.strategy.triplea.ai.pro.data.ProTerritoryManager;
@@ -13,7 +14,6 @@ import games.strategy.triplea.attachments.PoliticalActionAttachment;
 import games.strategy.triplea.delegate.Matches;
 import games.strategy.triplea.delegate.PoliticsDelegate;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -118,12 +118,12 @@ class ProPoliticsAi {
 
       // Decide whether to declare war on an enemy
       final List<PoliticalActionAttachment> options = new ArrayList<>(attackPercentageMap.keySet());
-      Collections.shuffle(options);
+      DeterministicRun.shuffle(options);
       for (final PoliticalActionAttachment action : options) {
         final double roundFactor = (round - 1) * .05; // 0, .05, .1, .15, etc
         final double warChance =
             roundFactor + attackPercentageMap.get(action) * (1 + 10 * roundFactor);
-        final double random = Math.random();
+        final double random = DeterministicRun.nextDouble();
         ProLogger.trace(enemyMap.get(action) + ", warChance=" + warChance + ", random=" + random);
         if (random <= warChance) {
           results.add(action);
@@ -135,8 +135,8 @@ class ProPoliticsAi {
 
       // Decide whether to declare war on a neutral
       final List<PoliticalActionAttachment> options = new ArrayList<>(neutralMap.keySet());
-      Collections.shuffle(options);
-      final double random = Math.random();
+      DeterministicRun.shuffle(options);
+      final double random = DeterministicRun.nextDouble();
       final double warChance = .01;
       ProLogger.debug("warChance=" + warChance + ", random=" + random);
       if (random <= warChance) {
@@ -146,14 +146,14 @@ class ProPoliticsAi {
     }
 
     // Old code used for non-war actions
-    if (Math.random() < .5) {
+    if (DeterministicRun.nextDouble() < .5) {
       final List<PoliticalActionAttachment> actionChoicesOther =
           AiPoliticalUtils.getPoliticalActionsOther(
               player, politicsDelegate.getTestedConditions(), data);
       if (!actionChoicesOther.isEmpty()) {
-        Collections.shuffle(actionChoicesOther);
+        DeterministicRun.shuffle(actionChoicesOther);
         int i = 0;
-        final double random = Math.random();
+        final double random = DeterministicRun.nextDouble();
         final int maxOtherActionsPerTurn =
             (random < .3
                 ? 0

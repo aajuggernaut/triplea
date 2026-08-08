@@ -9,7 +9,7 @@ import games.strategy.engine.data.UnitType;
 import games.strategy.triplea.ai.pro.logging.ProLogger;
 import games.strategy.triplea.delegate.Matches;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import lombok.Getter;
@@ -147,7 +147,7 @@ public class ProPurchaseOptionMap {
   }
 
   public List<ProPurchaseOption> getAllOptions() {
-    final Set<ProPurchaseOption> allOptions = new HashSet<>();
+    final Set<ProPurchaseOption> allOptions = new LinkedHashSet<>();
     allOptions.addAll(getLandOptions());
     allOptions.addAll(landZeroMoveOptions);
     allOptions.addAll(airOptions);
@@ -159,7 +159,7 @@ public class ProPurchaseOptionMap {
   }
 
   public List<ProPurchaseOption> getLandOptions() {
-    final Set<ProPurchaseOption> landOptions = new HashSet<>();
+    final Set<ProPurchaseOption> landOptions = new LinkedHashSet<>();
     landOptions.addAll(landFodderOptions);
     landOptions.addAll(landAttackOptions);
     landOptions.addAll(landDefenseOptions);
@@ -167,7 +167,7 @@ public class ProPurchaseOptionMap {
   }
 
   private List<ProPurchaseOption> getSeaOptions() {
-    final Set<ProPurchaseOption> seaOptions = new HashSet<>();
+    final Set<ProPurchaseOption> seaOptions = new LinkedHashSet<>();
     seaOptions.addAll(seaDefenseOptions);
     seaOptions.addAll(seaTransportOptions);
     seaOptions.addAll(seaCarrierOptions);

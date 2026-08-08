@@ -9,6 +9,8 @@ import games.strategy.engine.display.IDisplay;
 import games.strategy.engine.history.DelegateHistoryWriter;
 import games.strategy.engine.history.IDelegateHistoryWriter;
 import games.strategy.engine.player.Player;
+import games.strategy.engine.random.DeterministicRun;
+import games.strategy.engine.random.IRandomSource;
 import games.strategy.engine.random.IRandomStats.DiceType;
 import games.strategy.engine.random.PlainRandomSource;
 import games.strategy.triplea.ResourceLoader;
@@ -24,7 +26,7 @@ import org.triplea.sound.ISound;
  * changes generated during the simulation.
  */
 public class ProDummyDelegateBridge implements IDelegateBridge {
-  private final PlainRandomSource randomSource = new PlainRandomSource();
+  private final IRandomSource randomSource;
   private final IDisplay display = new HeadlessDisplay();
   private final ISound soundChannel = new HeadlessSoundChannel();
   private final GamePlayer player;
@@ -38,6 +40,25 @@ public class ProDummyDelegateBridge implements IDelegateBridge {
     this.proAi = proAi;
     gameData = data;
     this.player = player;
+    randomSource =
+        DeterministicRun.isEnabled()
+            ? new PlainRandomSource(DeterministicRun.seedFor(simulationContext(player, data)))
+            : new PlainRandomSource();
+  }
+
+  /**
+   * Identifies the phase being simulated, so {@link DeterministicRun} can seed it reproducibly.
+   * Whose turn it is and which round it is are enough to distinguish one simulation from the next;
+   * the step index separates the purchase simulation from placement validation within a turn.
+   *
+   * <p>Reads {@code getStepIndex()} rather than {@code getStep()}: the latter is not a pure getter
+   * -- it advances the sequence when the index is out of range.
+   */
+  private static long simulationContext(final GamePlayer player, final GameData data) {
+    long hash = player.getName().hashCode();
+    hash = hash * 31L + data.getSequence().getRound();
+    hash = hash * 31L + data.getSequence().getStepIndex();
+    return hash;
   }
 
   @Override

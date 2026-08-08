@@ -1112,7 +1112,8 @@ class ProPurchaseAi {
         enemyDistance = 10;
       }
       int fodderPercent = 80 - enemyDistance * 5;
-      if (proData.isPtvFeatures() && data.getSequence().getRound() > PTV_FODDER_GRACE_ROUNDS) {
+      if (proData.isPtvFeature(PtvFeature.MOBILITY_PURCHASE)
+          && data.getSequence().getRound() > PTV_FODDER_GRACE_ROUNDS) {
         fodderPercent = Math.max(0, fodderPercent - PTV_FODDER_PERCENT_REDUCTION);
       }
       ProLogger.debug(t + ", enemyDistance=" + enemyDistance + ", fodderPercent=" + fodderPercent);

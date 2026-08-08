@@ -7,6 +7,7 @@ import games.strategy.engine.data.TerritoryEffect;
 import games.strategy.engine.data.Unit;
 import games.strategy.engine.framework.GameDataManager;
 import games.strategy.engine.framework.GameDataUtils;
+import games.strategy.engine.random.DeterministicRun;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -106,6 +107,13 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
   // use both time and memory left to determine how many copies to make
   private static int getThreadsToUse(
       final long timeToCopyInMillis, final long memoryUsedBeforeCopy) {
+    if (DeterministicRun.isEnabled()) {
+      // The run count is split across workers, so worker count decides how many simulations each
+      // seeded worker performs -- and this method's own answer depends on wall-clock timing and
+      // free memory, neither of which repeats. A pinned count is reproducible without giving up
+      // the parallelism.
+      return DeterministicRun.workerCount();
+    }
     if (timeToCopyInMillis > 20_000 || MAX_THREADS == 1) {
       // just use 1 thread if we took more than 20 seconds to copy
       return 1;
@@ -158,6 +166,11 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
                 .filter(j -> cancelCurrentOperation.get() >= 0)
                 .mapToObj(j -> battleCalculatorFactory.apply(serializedData))
                 .collect(Collectors.toList()));
+        // Assigned after the fact: the stream above is parallel and may be short-circuited by
+        // cancellation, so position in the list -- not creation order -- is the stable identity.
+        for (int j = 0; j < workers.size(); j++) {
+          workers.get(j).setWorkerIndex(j);
+        }
       }
     }
     if (cancelCurrentOperation.get() < 0 || data == null) {
@@ -193,28 +206,40 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
         // causing it to abort with null data
         return new AggregateResults(0);
       }
+      // Drawn up front and indexed by worker, rather than each worker pulling its own share from
+      // inside the parallel stream. The distributor hands the remainder to whoever calls first, so
+      // pulling from within the stream let thread scheduling decide which worker did the extra
+      // simulation -- and each worker seeds its dice from its own index. The split is identical
+      // either way; only the assignment becomes stable.
       final var runCountDistributor = new RunCountDistributor(runCount, workers.size());
+      final int[] runCounts = new int[workers.size()];
+      for (int i = 0; i < runCounts.length; i++) {
+        runCounts[i] = runCountDistributor.nextRunCount();
+      }
       final AggregateResults results =
           new AggregateResults(
-              workers.parallelStream()
-                  .map(
-                      worker ->
+              IntStream.range(0, workers.size())
+                  .parallel()
+                  .mapToObj(
+                      i ->
                           // Note: Although we're running in parallel, the data passed in does not
                           // get modified, so no copies are necessary. Also, the outer calculate()
                           // call is synchronous, so there's no problem if the caller later modifies
                           // the collections that were provided.
-                          worker.calculate(
-                              attacker,
-                              defender,
-                              location,
-                              attacking,
-                              defending,
-                              bombarding,
-                              territoryEffects,
-                              retreatWhenOnlyAirLeft,
-                              runCountDistributor.nextRunCount()))
+                          workers
+                              .get(i)
+                              .calculate(
+                                  attacker,
+                                  defender,
+                                  location,
+                                  attacking,
+                                  defending,
+                                  bombarding,
+                                  territoryEffects,
+                                  retreatWhenOnlyAirLeft,
+                                  runCounts[i]))
                   .map(AggregateResults::getResults)
-                  .flatMap(Collection::parallelStream)
+                  .flatMap(Collection::stream)
                   .collect(Collectors.toList()));
       results.setTime(System.currentTimeMillis() - start);
       return results;

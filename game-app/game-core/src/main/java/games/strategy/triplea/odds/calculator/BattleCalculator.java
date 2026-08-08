@@ -19,7 +19,7 @@ import games.strategy.triplea.util.TuvCostsCalculator;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nonnull;
@@ -35,6 +35,14 @@ class BattleCalculator implements IBattleCalculator {
   @Setter private int retreatAfterXUnitsLeft = -1;
   @Setter private String attackerOrderOfLosses = null;
   @Setter private String defenderOrderOfLosses = null;
+
+  /**
+   * This worker's position in {@link ConcurrentBattleCalculator}'s pool. Mixed into the simulation
+   * seed under {@link games.strategy.engine.random.DeterministicRun} so the workers sharing a
+   * battle draw different dice instead of all replaying the same one.
+   */
+  @Setter private int workerIndex = 0;
+
   private volatile boolean cancelled = false;
   private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
@@ -92,6 +100,9 @@ class BattleCalculator implements IBattleCalculator {
       final List<Unit> defenderOrderOfLosses =
           OrderOfLossesInputPanel.getUnitListByOrderOfLoss(
               this.defenderOrderOfLosses, defendingUnits, gameData);
+      final long battleContext =
+          battleContextHash(
+              attacker2, defender2, location2, attackingUnits, defendingUnits, bombardingUnits);
       for (int i = 0; i < runCount && !cancelled; i++) {
         final CompositeChange allChanges = new CompositeChange();
         final DummyDelegateBridge bridge =
@@ -105,7 +116,8 @@ class BattleCalculator implements IBattleCalculator {
                 retreatAfterRound,
                 retreatAfterXUnitsLeft,
                 retreatWhenOnlyAirLeft,
-                tuvCalculator);
+                tuvCalculator,
+                battleContext * 1_000_003L + workerIndex * 10_007L + i);
         final MustFightBattle battle =
             new MustFightBattle(location2, attacker2, gameData, battleTracker);
         battle.setHeadless(true);
@@ -130,6 +142,41 @@ class BattleCalculator implements IBattleCalculator {
     }
   }
 
+  /**
+   * Identifies <em>what</em> is being simulated, so {@link
+   * games.strategy.engine.random.DeterministicRun} can seed the simulation's dice from the battle
+   * rather than from a call counter. Keying on the battle means both arms of a patched-vs-stock
+   * comparison roll the same dice for the same battle, even once their calculator call counts have
+   * diverged.
+   *
+   * <p>Unit contributions are summed rather than folded in sequence, so the hash does not depend on
+   * the order the caller happened to build its collections in.
+   */
+  private static long battleContextHash(
+      final GamePlayer attacker,
+      final GamePlayer defender,
+      final Territory location,
+      final Collection<Unit> attacking,
+      final Collection<Unit> defending,
+      final Collection<Unit> bombarding) {
+    long hash = location.getName().hashCode();
+    hash = hash * 31L + attacker.getName().hashCode();
+    hash = hash * 31L + defender.getName().hashCode();
+    hash = hash * 31L + unitsHash(attacking);
+    hash = hash * 31L + unitsHash(defending) * 7L;
+    hash = hash * 31L + unitsHash(bombarding) * 13L;
+    return hash;
+  }
+
+  private static long unitsHash(final Collection<Unit> units) {
+    long hash = 0;
+    for (final Unit unit : units) {
+      hash +=
+          unit.getType().getName().hashCode() * 31L + unit.getHits() * 7L + unit.getUnitDamage();
+    }
+    return hash;
+  }
+
   private <T> Collection<T> translateCollectionIntoOtherGameData(
       Collection<T> collection, GameData otherData) {
     // translateIntoOtherGameData() uses serialization, so if the collection is not serializable,
@@ -141,7 +188,9 @@ class BattleCalculator implements IBattleCalculator {
   }
 
   private Collection<Unit> mergeUnitCollections(Collection<Unit> c1, Collection<Unit> c2) {
-    var combined = new HashSet<>(c1);
+    // LinkedHashSet, not HashSet: Unit hashes on a random id, so a plain HashSet would hand the
+    // battle its units in a different order every run. Still rejects duplicates below.
+    var combined = new LinkedHashSet<>(c1);
     combined.addAll(c2);
     Preconditions.checkState(
         combined.size() == c1.size() + c2.size(),

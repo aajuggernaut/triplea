@@ -15,7 +15,9 @@ dependencies {
 
 tasks.named<Test>("test") {
     // AiGameTest is memory intensive due to ConcurrentBattleCalculator threads deserializing GameData concurrently.
-    maxHeapSize = "2G"
+    // 2G was sized for the tiny Test1.xml; the PTV determinism tests parse a ~1.34 MB map and play
+    // real rounds with 15 AI players, which does not fit in it.
+    maxHeapSize = "6G"
 }
 
 // Batch headless PTV games for AI evaluation. Runs games sequentially: ProAi shares a static
@@ -41,6 +43,12 @@ tasks.register<JavaExec>("ptvEval") {
     // prioritisation). FINE gives phase headers only; FINEST is unreadably large.
     (project.findProperty("ptvEvalAiLog") as String?)?.let { level ->
         jvmArgs("-Dtriplea.ai.pro.headlessLogLevel=$level")
+    }
+    // -PptvEvalFeatures=OBJECTIVE_VALUE restricts the ptv bot to one behaviour, so a run can
+    // attribute an effect to a single patch instead of to the whole accumulated stack.
+    // Comma-separated; "none" makes the ptv bot behave as stock. Defaults to all features.
+    (project.findProperty("ptvEvalFeatures") as String?)?.let { features ->
+        jvmArgs("-Dtriplea.ai.ptv.features=$features")
     }
     args = (project.findProperty("ptvEvalArgs") as String?)?.split(" ")?.filter { it.isNotBlank() }
         ?: listOf("--games", "2", "--side", "axis", "--max-rounds", "20")
@@ -73,4 +81,11 @@ tasks.named<ProcessResources>("processTestResources") {
     from(downloadTask) {
         into("save-games")
     }
+}
+
+// Prints the test runtime classpath so evaluation shards can be launched as plain JVMs instead of
+// one Gradle daemon per shard, which on a 32 GB machine is the difference between 4 shards and 2.
+tasks.register("ptvEvalClasspath") {
+    val cp = sourceSets["test"].runtimeClasspath
+    doLast { println(cp.asPath) }
 }

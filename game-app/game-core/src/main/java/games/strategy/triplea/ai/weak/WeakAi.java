@@ -13,6 +13,7 @@ import games.strategy.engine.data.Route;
 import games.strategy.engine.data.Territory;
 import games.strategy.engine.data.Unit;
 import games.strategy.engine.data.UnitType;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.Properties;
 import games.strategy.triplea.UnitUtils;
@@ -32,7 +33,6 @@ import games.strategy.triplea.delegate.remote.IPurchaseDelegate;
 import games.strategy.triplea.delegate.remote.ITechDelegate;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -547,7 +547,7 @@ public class WeakAi extends AbstractAi {
             .or(Matches.isTerritoryFreeNeutral(data.getProperties()));
     final List<Territory> enemyOwned =
         CollectionUtils.getMatches(data.getMap().getTerritories(), walkInto);
-    Collections.shuffle(enemyOwned);
+    DeterministicRun.shuffle(enemyOwned);
     enemyOwned.sort(
         (o1, o2) -> {
           // -1 means o1 goes first. 1 means o2 goes first. zero means they are equal.
@@ -791,7 +791,7 @@ public class WeakAi extends AbstractAi {
             minCost = cost;
           }
           // give a preference to cheap units
-          if (Math.random() * cost < 2 && cost <= leftToSpend) {
+          if (DeterministicRun.nextDouble() * cost < 2 && cost <= leftToSpend) {
             leftToSpend -= cost;
             purchase.add(rule, 1);
           }
@@ -842,7 +842,7 @@ public class WeakAi extends AbstractAi {
       final Optional<Territory> optionalCapitol =
           TerritoryAttachment.getFirstOwnedCapitalOrFirstUnownedCapital(player, data.getMap());
       // we should sort this
-      Collections.shuffle(repairFactories);
+      DeterministicRun.shuffle(repairFactories);
       for (final Territory fixTerr : repairFactories) {
         if (!Matches.territoryIsOwnedAndHasOwnedUnitMatching(
                 player, Matches.unitCanProduceUnitsAndCanBeDamaged())
@@ -1025,10 +1025,10 @@ public class WeakAi extends AbstractAi {
           }
         }
         final boolean buyBecauseTransport =
-            (Math.random() < 0.7 && transportCount < goodNumberOfTransports)
-                || Math.random() < 0.10;
+            (DeterministicRun.nextDouble() < 0.7 && transportCount < goodNumberOfTransports)
+                || DeterministicRun.nextDouble() < 0.10;
         final boolean dontBuyBecauseTooManyTransports = transportCount > 2 * goodNumberOfTransports;
-        if (((!isTransport && Math.random() * cost < 2)
+        if (((!isTransport && DeterministicRun.nextDouble() * cost < 2)
                 || (isTransport && buyBecauseTransport && !dontBuyBecauseTooManyTransports))
             && cost <= leftToSpend) {
           leftToSpend -= cost;
@@ -1058,7 +1058,7 @@ public class WeakAi extends AbstractAi {
         .filter(Matches.territoryIsImpassable().negate())
         .ifPresent(capitol -> placeAllWeCanOn(data, capitol, placeDelegate, player));
     final List<Territory> randomTerritories = new ArrayList<>(data.getMap().getTerritories());
-    Collections.shuffle(randomTerritories);
+    DeterministicRun.shuffle(randomTerritories);
     final @Nullable Territory capitol = optionalCapitol.orElse(null);
     for (final Territory t : randomTerritories) {
       if (!t.equals(capitol)

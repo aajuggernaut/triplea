@@ -19,6 +19,7 @@ import games.strategy.triplea.delegate.Matches;
 import games.strategy.triplea.delegate.TerritoryEffectHelper;
 import games.strategy.triplea.delegate.battle.BattleState;
 import games.strategy.triplea.delegate.battle.casualty.CasualtyUtil;
+import games.strategy.triplea.delegate.battle.steps.fire.general.TargetGroup;
 import games.strategy.triplea.delegate.power.calculator.CombatValueBuilder;
 import games.strategy.triplea.delegate.power.calculator.PowerStrengthAndRolls;
 import java.util.ArrayList;
@@ -35,6 +36,32 @@ import org.triplea.java.collections.CollectionUtils;
 
 /** Pro AI battle utilities. */
 public final class ProBattleUtils {
+
+  /**
+   * Whether an attacking force is incapable of hitting <em>any</em> defender, making the battle
+   * unwinnable no matter how the dice fall.
+   *
+   * <p>The case that prompted this: Italian aircraft attacked a Russian submarine with no destroyer
+   * present. Air units cannot target submarines unless a destroyer is in the firing force, so no
+   * attacker had a legal target; the submarine then submerged against an air-only force and the
+   * battle ended a draw, having cost a full turn of movement from every plane involved.
+   *
+   * <p>Defers to {@link TargetGroup#newTargetGroups}, the engine's own targeting logic, rather than
+   * re-deriving the rule from {@code canNotBeTargetedBy} here. The rule is subtle -- a single
+   * destroyer anywhere in the firing force cancels the restriction for every unit type at once --
+   * and a second implementation would be free to drift away from the one that actually resolves
+   * battles.
+   *
+   * <p>An empty defender list is <b>not</b> reported: that is an unopposed capture, which is a
+   * perfectly good attack and must not be pruned.
+   */
+  public static boolean attackCannotHitAnyDefender(
+      final Collection<Unit> attackers, final Collection<Unit> defenders) {
+    if (attackers.isEmpty() || defenders.isEmpty()) {
+      return false;
+    }
+    return TargetGroup.newTargetGroups(attackers, defenders).isEmpty();
+  }
 
   public static final int SHORT_RANGE = 2;
   public static final int MEDIUM_RANGE = 3;

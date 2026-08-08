@@ -129,6 +129,9 @@ public class ProCombatMoveAi {
           attackOptions, proData.getPurchaseOptions().getLandOptions());
     }
 
+    // Drop attacks whose units cannot legally hit anything (W15)
+    removeAttacksThatCannotHitAnything();
+
     // Check if any subs in contested territory that's not being attacked
     checkContestedSeaTerritories();
 
@@ -147,6 +150,58 @@ public class ProCombatMoveAi {
         territoryManager.getAttackOptions().getTerritoryMap();
     territoryManager = null;
     return result;
+  }
+
+  /**
+   * Cancels attacks where no attacking unit can legally target any defender.
+   *
+   * <p>Such an attack cannot achieve anything: it takes no territory, kills nothing, and spends the
+   * movement of every unit committed to it. The observed case was Italian aircraft sent against a
+   * lone Russian submarine with no destroyer along -- air cannot target submarines without one, the
+   * submarine submerged, and the battle ended a draw.
+   *
+   * <p>Runs last, after every pass that adds units, because the answer depends on the final
+   * composition: the destroyer pass in {@link #determineUnitsToAttackWith} may add a destroyer that
+   * makes the same attack perfectly sound, and checking earlier would prune attacks that were about
+   * to become legal.
+   *
+   * <p>Does not attempt to <em>repair</em> the attack by finding a destroyer -- that is a separate
+   * judgement about whether the target is worth diverting one to. This only declines to make a move
+   * that provably does nothing.
+   */
+  private void removeAttacksThatCannotHitAnything() {
+    final Map<Territory, ProTerritory> attackMap =
+        territoryManager.getAttackOptions().getTerritoryMap();
+    for (final Iterator<Map.Entry<Territory, ProTerritory>> it = attackMap.entrySet().iterator();
+        it.hasNext(); ) {
+      final Map.Entry<Territory, ProTerritory> entry = it.next();
+      final ProTerritory patd = entry.getValue();
+      if (patd.getUnits().isEmpty() && patd.getAmphibAttackMap().isEmpty()) {
+        continue;
+      }
+      final List<Unit> attackers = new ArrayList<>(patd.getUnits());
+      patd.getAmphibAttackMap().values().forEach(attackers::addAll);
+      final List<Unit> defenders = patd.getMaxEnemyDefenders(player);
+      if (ProBattleUtils.attackCannotHitAnyDefender(attackers, defenders)) {
+        // Detected unconditionally but only cancelled when the feature is on, so that a stock run
+        // reports how often the defect occurs while still committing the attack. That gives the
+        // before-and-after counts without needing two different builds.
+        final boolean cancel = proData.isPtvFeature(PtvFeature.NO_HIT_ATTACK_GUARD);
+        ProLogger.info(
+            String.format(
+                "PTVDIAG-NOHIT %s attack on %s: %s cannot target any of %s",
+                cancel ? "cancelling" : "detected (not cancelling)",
+                entry.getKey().getName(),
+                attackers,
+                defenders));
+        if (cancel) {
+          patd.getUnits().clear();
+          patd.getAmphibAttackMap().clear();
+          patd.getBombardTerritoryMap().clear();
+          it.remove();
+        }
+      }
+    }
   }
 
   void doMove(
@@ -541,9 +596,12 @@ public class ProCombatMoveAi {
    * list; genuinely worthless rock is still skipped.
    */
   private boolean isPtvAmphibWorthTakingAnyway(final Territory t) {
-    if (!proData.isPtvFeatures()) {
+    if (!proData.isPtvFeature(PtvFeature.AMPHIB_TARGETS)) {
       return false;
     }
+    // The objective term is simply empty when OBJECTIVE_VALUE is off, so this degrades to a
+    // production-only rule rather than needing its own gate. That keeps the two features
+    // independently measurable.
     return TerritoryAttachment.getProduction(t) > 0
         || proData.getObjectiveValues().getOrDefault(t, 0.0) > 0.0;
   }
