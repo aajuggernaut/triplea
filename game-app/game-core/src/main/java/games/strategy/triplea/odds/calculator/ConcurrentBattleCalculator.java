@@ -240,28 +240,33 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
       for (int i = 0; i < runCounts.length; i++) {
         runCounts[i] = runCountDistributor.nextRunCount();
       }
+      // Kept per worker before merging, so a divergence can be attributed to one worker rather
+      // than only to the combined figure. Merging still happens in worker order.
+      final List<AggregateResults> perWorker =
+          IntStream.range(0, workers.size())
+              .parallel()
+              .mapToObj(
+                  i ->
+                      // Note: Although we're running in parallel, the data passed in does not
+                      // get modified, so no copies are necessary. Also, the outer calculate()
+                      // call is synchronous, so there's no problem if the caller later modifies
+                      // the collections that were provided.
+                      workers
+                          .get(i)
+                          .calculate(
+                              attacker,
+                              defender,
+                              location,
+                              attacking,
+                              defending,
+                              bombarding,
+                              territoryEffects,
+                              retreatWhenOnlyAirLeft,
+                              runCounts[i]))
+              .collect(Collectors.toList());
       final AggregateResults results =
           new AggregateResults(
-              IntStream.range(0, workers.size())
-                  .parallel()
-                  .mapToObj(
-                      i ->
-                          // Note: Although we're running in parallel, the data passed in does not
-                          // get modified, so no copies are necessary. Also, the outer calculate()
-                          // call is synchronous, so there's no problem if the caller later modifies
-                          // the collections that were provided.
-                          workers
-                              .get(i)
-                              .calculate(
-                                  attacker,
-                                  defender,
-                                  location,
-                                  attacking,
-                                  defending,
-                                  bombarding,
-                                  territoryEffects,
-                                  retreatWhenOnlyAirLeft,
-                                  runCounts[i]))
+              perWorker.stream()
                   .map(AggregateResults::getResults)
                   .flatMap(Collection::stream)
                   .collect(Collectors.toList()));
@@ -289,6 +294,10 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
                 + workers.size()
                 + "|air="
                 + retreatWhenOnlyAirLeft
+                + "|perWorker="
+                + perWorker.stream()
+                    .map(r -> r.getResults().size() + ":" + r.getAttackerWinPercent())
+                    .collect(Collectors.joining(","))
                 + "  ->  win="
                 + results.getAttackerWinPercent()
                 + " rolls="
