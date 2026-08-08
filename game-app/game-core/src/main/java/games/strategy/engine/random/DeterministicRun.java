@@ -61,6 +61,14 @@ public final class DeterministicRun {
   private static volatile long baseSeed = 0L;
   private static final AtomicLong unitIdSequence = new AtomicLong();
 
+  // Diagnostic: unit ids handed out from a thread other than the one that enabled the run.
+  // getAndIncrement() is atomic, so the TOTAL is stable, but which thread receives which id is
+  // not -- and Unit hashes on its id, so a racing assignment silently reorders every
+  // HashMap<Unit, ?> in the AI. That would be intermittent, which is what the evidence shows.
+  private static volatile Thread owningThread = null;
+  private static final AtomicLong offThreadUnitIds = new AtomicLong();
+  private static volatile String firstOffThreadTrace = null;
+
   private static final Object policyLock = new Object();
   private static SplittableRandom policyRandom = new SplittableRandom(0L);
 
@@ -78,6 +86,9 @@ public final class DeterministicRun {
   public static void enable(final long seed) {
     baseSeed = seed;
     unitIdSequence.set(0L);
+    owningThread = Thread.currentThread();
+    offThreadUnitIds.set(0L);
+    firstOffThreadTrace = null;
     synchronized (policyLock) {
       policyRandom = new SplittableRandom(seed ^ 0x2545F4914F6CDD1DL);
     }
@@ -164,6 +175,28 @@ public final class DeterministicRun {
     workerCount = count;
   }
 
+  /**
+   * How many unit ids have been issued since {@link #enable}. Diagnostic only.
+   *
+   * <p>A run that reproduces must consume ids in lockstep with its twin. Comparing this per step
+   * localises a divergence to the moment the two runs stopped agreeing on how many units to create,
+   * which is typically far earlier -- and far more specific -- than the first visible difference on
+   * the board.
+   */
+  public static long unitIdsIssued() {
+    return unitIdSequence.get();
+  }
+
+  /** How many unit ids were issued off the enabling thread. Non-zero means the ids race. */
+  public static long offThreadUnitIds() {
+    return offThreadUnitIds.get();
+  }
+
+  /** Stack trace of the first off-thread unit creation, or null if there was none. */
+  public static String firstOffThreadTrace() {
+    return firstOffThreadTrace;
+  }
+
   /** Restores stock behaviour. Call between games so a leaked flag cannot affect normal play. */
   public static void disable() {
     enabled = false;
@@ -192,6 +225,16 @@ public final class DeterministicRun {
   public static UUID newUnitId() {
     if (!enabled) {
       return UUID.randomUUID();
+    }
+    if (Thread.currentThread() != owningThread) {
+      offThreadUnitIds.incrementAndGet();
+      if (firstOffThreadTrace == null) {
+        final StringBuilder trace = new StringBuilder(Thread.currentThread().getName());
+        for (final StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+          trace.append(System.lineSeparator()).append("    at ").append(frame);
+        }
+        firstOffThreadTrace = trace.toString();
+      }
     }
     // The low bits are mixed rather than sequential so that UUID.hashCode() still spreads well,
     // and hash-ordered collections do not degenerate into insertion order.

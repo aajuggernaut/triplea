@@ -160,16 +160,33 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
         workers.add(battleCalculatorFactory.apply(serializedData));
         int threadsToUse = getThreadsToUse((System.currentTimeMillis() - startTime), startMemory);
         // Now, create the remaining ones in parallel.
+        IntStream remainingWorkers = IntStream.range(1, threadsToUse).parallel();
+        if (!DeterministicRun.isEnabled()) {
+          // Abandons building the rest of the pool when a cancel is already in flight, which saves
+          // work during shutdown. Deliberately skipped under DeterministicRun: the run count is
+          // split across whatever pool exists, so a partially built pool is a different pool and
+          // gives the AI a different odds estimate. Pinning getThreadsToUse() is not enough on its
+          // own -- this filter was silently reducing a pinned pool of 4 to 1, which made the same
+          // seed reproduce on some runs and not others.
+          remainingWorkers = remainingWorkers.filter(j -> cancelCurrentOperation.get() >= 0);
+        }
         workers.addAll(
-            IntStream.range(1, threadsToUse)
-                .parallel()
-                .filter(j -> cancelCurrentOperation.get() >= 0)
+            remainingWorkers
                 .mapToObj(j -> battleCalculatorFactory.apply(serializedData))
                 .collect(Collectors.toList()));
         // Assigned after the fact: the stream above is parallel and may be short-circuited by
         // cancellation, so position in the list -- not creation order -- is the stable identity.
         for (int j = 0; j < workers.size(); j++) {
           workers.get(j).setWorkerIndex(j);
+        }
+        if (DeterministicRun.isEnabled() && workers.size() != DeterministicRun.workerCount()) {
+          // The parallel stream above is filtered on a cancellation flag, so a concurrent
+          // cancel silently yields a smaller pool. The run count is split across the pool, so
+          // that changes the AI's simulation sample on some runs and not others.
+          log.warn(
+              "PTVDIAG-POOL degraded to {} workers, expected {}",
+              workers.size(),
+              DeterministicRun.workerCount());
         }
       }
     }
@@ -202,6 +219,13 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
     synchronized (mutexCalcIsRunning) {
       final long start = System.currentTimeMillis();
       if (!isDataSet || workers.isEmpty()) {
+        if (DeterministicRun.isEnabled()) {
+          log.warn(
+              "PTVDIAG-EMPTY calculate() returned no results (isDataSet={}, workers={});"
+                  + " the AI is deciding with no odds estimate at all",
+              isDataSet,
+              workers.size());
+        }
         // we could have attempted to set a new game data, while the old one was still being set,
         // causing it to abort with null data
         return new AggregateResults(0);
