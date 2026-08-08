@@ -147,7 +147,22 @@ public final class DeterministicRun {
    */
   private static final int DEFAULT_WORKER_COUNT = 4;
 
-  private static volatile int workerCount = DEFAULT_WORKER_COUNT;
+  // -Dtriplea.ai.ptv.workers=1 pins the pool to a single worker. Used as a bisect: if one
+  // worker reproduces exactly, the fault is in cross-worker interaction; if it still
+  // diverges, it is inside a single simulation. Either answer halves the search.
+  private static volatile int workerCount = readWorkerCountProperty();
+
+  private static int readWorkerCountProperty() {
+    final String configured = System.getProperty("triplea.ai.ptv.workers");
+    if (configured == null || configured.isBlank()) {
+      return DEFAULT_WORKER_COUNT;
+    }
+    final int parsed = Integer.parseInt(configured.trim());
+    if (parsed < 1) {
+      throw new IllegalArgumentException("worker count must be >= 1, got " + parsed);
+    }
+    return parsed;
+  }
 
   private DeterministicRun() {}
 
