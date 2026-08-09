@@ -32,7 +32,19 @@ public enum PtvFeature {
   AMPHIB_TARGETS,
 
   /** W15: cancel attacks whose units cannot legally target any defender. */
-  NO_HIT_ATTACK_GUARD;
+  NO_HIT_ATTACK_GUARD,
+
+  /**
+   * W7: never commit cargo to a sea zone with no nameable unload territory.
+   *
+   * <p>The non-combat amphib planner's sea branch otherwise parks loaded ships (including PTV's
+   * marine-carrying warships) at the highest-value sea zone it can reach, repeats that choice every
+   * round because nothing penalizes cargo afloat, and then anchors the fleet to defend the parked
+   * ship. Skipping the no-unload commit releases the ship to the later passes -- unload to safe
+   * land if loaded, loading position or safety if empty -- which were previously unreachable for
+   * loaded ships. Diagnosis: notes/006 in the companion repo.
+   */
+  NO_PARK_LOADED;
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 

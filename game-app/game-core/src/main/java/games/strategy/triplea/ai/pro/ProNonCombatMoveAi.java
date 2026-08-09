@@ -1374,6 +1374,18 @@ class ProNonCombatMoveAi {
                     unloadToTerritory.getTerritory(),
                     maxAmphibUnitsToAdd,
                     maxValue));
+          } else if (proData.isPtvFeature(PtvFeature.NO_PARK_LOADED)) {
+            // W7 (notes/006): committing cargo to a sea zone with no nameable unload is the
+            // stall engine -- the same evaluation repeats every round (nothing penalizes cargo
+            // afloat), and the defend-transport passes then anchor the fleet to the parked ship.
+            // Skip the commit instead: units stay ashore, and an already-loaded ship stays in
+            // the transport maps so the later unload-to-safe / safest-territory passes -- which
+            // this consume() made unreachable for loaded ships -- finally get to handle it.
+            ProLogger.trace(
+                String.format(
+                    "%s NOT parked loaded at %s (no unload target); released to later passes",
+                    transport, maxValueTerritory.getTerritory()));
+            continue;
           } else {
             maxValueTerritory.addTempUnits(maxAmphibUnitsToAdd);
             maxValueTerritory.putTempAmphibAttackMap(transport, maxAmphibUnitsToAdd);
