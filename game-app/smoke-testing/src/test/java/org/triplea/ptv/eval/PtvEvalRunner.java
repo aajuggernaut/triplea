@@ -7,10 +7,14 @@ import games.strategy.engine.data.Territory;
 import games.strategy.engine.framework.ServerGame;
 import games.strategy.engine.framework.startup.ui.PlayerTypes;
 import games.strategy.engine.random.DeterministicRun;
+import games.strategy.triplea.ai.pro.ProAi;
+import games.strategy.triplea.ai.pro.PtvFeature;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.delegate.EndRoundDelegate;
 import games.strategy.triplea.delegate.Matches;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -93,6 +97,13 @@ public final class PtvEvalRunner {
   private static final int PRIMARY_METRIC_ROUND = 15;
 
   /**
+   * The realized AI-assignment histogram from the most recent game, for the run footer. Identical
+   * across a run's games (same assigner, same map); previously it existed only in the console log,
+   * which bare-JVM shard launches discard.
+   */
+  private static volatile String lastAssignment = null;
+
+  /**
    * Rounds at which material position is sampled mid-game: every fifth round the run reaches.
    * Derived rather than fixed so that shortening {@code --max-rounds} does not silently leave
    * checkpoints that can never fire.
@@ -104,11 +115,23 @@ public final class PtvEvalRunner {
   private PtvEvalRunner() {}
 
   public static void main(final String[] args) throws IOException {
+    // Marks this JVM as a batch eval: ServerGame's stalled-teardown path logs and continues
+    // instead of System.exit(), which would kill every remaining game in the batch.
+    System.setProperty("triplea.ai.ptv.eval", "true");
     final Options options = Options.parse(args);
     GameTestUtils.setUp();
 
     final PlayerTypes.Type candidate = bot(options.candidate);
     final PlayerTypes.Type baseline = bot(options.baseline);
+    if (candidate == baseline && !options.allowSelf) {
+      // The default arguments are pro-vs-pro, so forgetting --candidate silently produced a
+      // self-comparison whose numbers looked perfectly ordinary. Three such files shipped.
+      throw new IllegalArgumentException(
+          "candidate and baseline are both '"
+              + options.candidate
+              + "' -- a self-comparison measures nothing. Pass --allow-self true if this is"
+              + " deliberate (e.g. a reproducibility census).");
+    }
     final List<String> sides = options.sides();
     final List<Long> seeds = options.seeds();
     final List<Integer> checkpointRounds = checkpointsFor(options.maxRounds);
@@ -122,15 +145,38 @@ public final class PtvEvalRunner {
           PRIMARY_METRIC_ROUND + 1);
     }
 
+    if (Files.exists(options.out) && !options.overwrite) {
+      // The default --out is a fixed path; without this, rerunning truncated a complete CSV into
+      // a shorter one with no trace of the loss.
+      throw new IllegalArgumentException(
+          "Output file already exists: "
+              + options.out.toAbsolutePath()
+              + " -- refusing to overwrite a previous run. Pass --overwrite true or a new --out.");
+    }
     Files.createDirectories(options.out.toAbsolutePath().getParent());
     final List<GameOutcome> outcomes = new ArrayList<>();
 
     try (PrintWriter csv =
         new PrintWriter(Files.newBufferedWriter(options.out, StandardCharsets.UTF_8))) {
+      // Provenance is read from inside the JVM, not echoed from the command line: the CSV states
+      // what actually ran. Bare-JVM shard launches drop Gradle's defaults, so echoed intentions
+      // and reality have already diverged once (a "single-feature" run whose header could not
+      // prove it was not the whole stack).
       csv.println("# ptv-eval run " + Instant.now());
       csv.println("# map=WW2 Path to Victory v6.4 (commit 45354ca)");
+      csv.println("# engine=" + engineBuildId());
       csv.println("# candidate=" + options.candidate + " baseline=" + options.baseline);
+      csv.println("# side=" + options.side);
+      csv.println("# features=" + PtvFeature.selected());
+      csv.println("# workers=" + DeterministicRun.workerCount());
+      csv.println(
+          "# heapMaxMb="
+              + Runtime.getRuntime().maxMemory() / (1024 * 1024)
+              + " cores="
+              + Runtime.getRuntime().availableProcessors());
       csv.println("# maxRounds=" + options.maxRounds + " games=" + (seeds.size() * sides.size()));
+      csv.println(
+          "# seeds=" + seeds.stream().map(String::valueOf).collect(Collectors.joining(",")));
       csv.println("# checkpoints=" + checkpointRounds);
       csv.println("# primaryMetricRound=" + PRIMARY_METRIC_ROUND);
       csv.println("# deterministic=" + options.deterministic);
@@ -151,6 +197,14 @@ public final class PtvEvalRunner {
           outcomes.add(outcome);
           csv.println(outcome.toCsvRow());
           csv.flush();
+          if (!outcome.diag().clean()) {
+            log.warn(
+                "DIAG-CONTAMINATED game (seed={}, side={}): {} -- the AI decided on missing or"
+                    + " corrupted odds at some point; do not score this row.",
+                seed,
+                side,
+                outcome.diag());
+          }
           log.info(
               "seed={} candidateSide={} -> {} | PRIMARY r{} VC {} share {}% | "
                   + "VC {}v{} prod {}v{} units {}v{} | VC path {} | {} rounds, {} ms",
@@ -171,9 +225,68 @@ public final class PtvEvalRunner {
               outcome.durationMs());
         }
       }
+      // The completeness marker. A crashed or killed batch produces a file without this line, so
+      // a consumer can tell "finished 8 of 8" from "died after 5" without counting rows against
+      // the games= header. compare.py refuses files that lack it.
+      final long errors = outcomes.stream().filter(o -> o.outcome().equals("ERROR")).count();
+      csv.println(
+          "# run_complete games="
+              + outcomes.size()
+              + " errors="
+              + errors
+              + " assignment="
+              + (lastAssignment == null ? "unrecorded" : lastAssignment)
+              + " finished="
+              + Instant.now());
+      if (csv.checkError()) {
+        // PrintWriter swallows IOExceptions; without this a full disk yields a silently short CSV.
+        throw new IOException(
+            "CSV writer reported an error; " + options.out.toAbsolutePath() + " is suspect.");
+      }
     }
 
     summarize(outcomes, options);
+  }
+
+  /**
+   * The fork commit this runner was built from, with a {@code -dirty} suffix when the working tree
+   * has uncommitted changes -- which during patch development is the norm, and exactly when knowing
+   * "which code was this" matters most. Falls back to {@code unknown} outside a git checkout.
+   */
+  private static String engineBuildId() {
+    final String sha = git("rev-parse", "--short=9", "HEAD");
+    if (sha == null) {
+      return "unknown";
+    }
+    final String status = git("status", "--porcelain");
+    return status == null || status.isEmpty() ? sha : sha + "-dirty";
+  }
+
+  @SuppressWarnings("PMD.EmptyCatchBlock")
+  private static String git(final String... gitArgs) {
+    try {
+      final List<String> command = new ArrayList<>(List.of("git"));
+      command.addAll(List.of(gitArgs));
+      final Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+      final StringBuilder output = new StringBuilder();
+      try (BufferedReader reader =
+          new BufferedReader(
+              new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          if (output.length() > 0) {
+            output.append(' ');
+          }
+          output.append(line.trim());
+        }
+      }
+      return process.waitFor() == 0 ? output.toString() : null;
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return null;
+    } catch (final IOException e) {
+      return null;
+    }
   }
 
   /**
@@ -244,7 +357,9 @@ public final class PtvEvalRunner {
           elapsedMs(startNanos),
           candidateScore,
           opponentScore,
-          checkpoints);
+          checkpoints,
+          // Read before teardown: stopGame's own cancels must not be blamed on the game.
+          Diag.snapshot());
 
     } catch (final RuntimeException e) {
       log.error("Game failed (seed={}, candidateSide={})", seed, candidateSide, e);
@@ -258,13 +373,18 @@ public final class PtvEvalRunner {
           elapsedMs(startNanos),
           SideScore.EMPTY,
           SideScore.EMPTY,
-          checkpoints);
+          checkpoints,
+          Diag.snapshot());
     } finally {
       if (game != null) {
         // Required between games: releases the shared ConcurrentBattleCalculator's threads and
         // clears its game data, which would otherwise leak into the next game's simulations.
         game.stopGame();
       }
+      // stopGame discards the teardown future, and the teardown reads DeterministicRun.isEnabled()
+      // more than once while it runs -- joining here closes the window in which the next game's
+      // enable()/disable() flip could be observed mid-teardown.
+      ProAi.drainSharedCalculator().join();
       // Cleared per game rather than per run, so the unit-id sequence restarts from the same point
       // for every seed instead of carrying over from whatever the previous game consumed.
       DeterministicRun.disable();
@@ -312,14 +432,23 @@ public final class PtvEvalRunner {
     for (final GamePlayer player : data.getPlayerList().getPlayers()) {
       types.put(player.getName(), candidatePlayers.contains(player) ? candidate : baseline);
     }
-    // Logged every game as an audit trail: if this ever shows a single AI type covering all 15
-    // players when candidate and baseline differ, the run is measuring a bot against itself.
+    // Logged every game as an audit trail, captured for the CSV footer, and validated: a single
+    // AI type covering all 15 players when candidate and baseline differ means the run is
+    // measuring a bot against itself, and the numbers are worthless.
     final Map<String, Long> byLabel =
         types.values().stream()
             .collect(
                 Collectors.groupingBy(
                     PlayerTypes.Type::getLabel, TreeMap::new, Collectors.counting()));
     log.info("AI assignment (candidate plays {}): {}", candidateSide, byLabel);
+    lastAssignment = byLabel.toString().replace(",", ";");
+    if (candidate != baseline && byLabel.size() < 2) {
+      throw new IllegalStateException(
+          "candidate and baseline are different bots but the realized assignment has a single AI"
+              + " type ("
+              + byLabel
+              + ") -- the run would compare a bot to itself.");
+    }
     return types;
   }
 
@@ -414,6 +543,14 @@ public final class PtvEvalRunner {
         "OVERALL: candidate ahead on victory cities in {} of {} scored games",
         vcAhead,
         scored.size());
+    final long contaminated = outcomes.stream().filter(o -> !o.diag().clean()).count();
+    if (contaminated > 0) {
+      log.warn(
+          "OVERALL: {} of {} games are DIAG-CONTAMINATED (see diag_* columns); their rows must"
+              + " not be scored.",
+          contaminated,
+          outcomes.size());
+    }
     log.info("CSV written to {}", options.out.toAbsolutePath());
   }
 
@@ -505,6 +642,34 @@ public final class PtvEvalRunner {
     static final SideScore EMPTY = new SideScore(-1, -1, -1);
   }
 
+  /**
+   * The game's diagnostic tripwires, snapshotted from {@link DeterministicRun} before teardown. Any
+   * non-zero value means the AI decided on missing or corrupted odds at some point -- an empty
+   * worker pool answering NaN, a cancelled worker returning a truncated sample, a stopped
+   * calculator answering all-zero, or unit ids issued off-thread. Such a game must not be scored;
+   * compare.py refuses rows where these are non-zero.
+   */
+  private record Diag(
+      long emptyPool, long degradedPool, long truncatedCalc, long stoppedCalc, long offThreadIds) {
+
+    static Diag snapshot() {
+      return new Diag(
+          DeterministicRun.emptyPoolResults(),
+          DeterministicRun.degradedPoolBuilds(),
+          DeterministicRun.truncatedCalcRuns(),
+          DeterministicRun.stoppedCalcQueries(),
+          DeterministicRun.offThreadUnitIds());
+    }
+
+    boolean clean() {
+      return emptyPool == 0
+          && degradedPool == 0
+          && truncatedCalc == 0
+          && stoppedCalc == 0
+          && offThreadIds == 0;
+    }
+  }
+
   /** Material position of both sides entering a given round. */
   private record Checkpoint(int round, SideScore candidate, SideScore opponent) {}
 
@@ -519,7 +684,8 @@ public final class PtvEvalRunner {
       long durationMs,
       SideScore candidateScore,
       SideScore opponentScore,
-      List<Checkpoint> checkpoints) {
+      List<Checkpoint> checkpoints,
+      Diag diag) {
 
     boolean candidateWon() {
       return outcome.equals("VICTORY") && winningAlliance.equals(candidateSide);
@@ -550,7 +716,9 @@ public final class PtvEvalRunner {
           + "candidate_vc,opponent_vc,candidate_prod,opponent_prod,"
           + "candidate_units,opponent_units,"
           + "candidate_vc_by_round,opponent_vc_by_round,"
-          + "candidate_prod_by_round,opponent_prod_by_round";
+          + "candidate_prod_by_round,opponent_prod_by_round,"
+          + "diag_empty_pool,diag_degraded_pool,diag_truncated_calc,diag_stopped_calc,"
+          + "diag_offthread_ids";
     }
 
     String toCsvRow() {
@@ -575,7 +743,12 @@ public final class PtvEvalRunner {
           trajectory(checkpoints, c -> c.candidate().victoryCities()),
           trajectory(checkpoints, c -> c.opponent().victoryCities()),
           trajectory(checkpoints, c -> c.candidate().production()),
-          trajectory(checkpoints, c -> c.opponent().production()));
+          trajectory(checkpoints, c -> c.opponent().production()),
+          String.valueOf(diag.emptyPool()),
+          String.valueOf(diag.degradedPool()),
+          String.valueOf(diag.truncatedCalc()),
+          String.valueOf(diag.stoppedCalc()),
+          String.valueOf(diag.offThreadIds()));
     }
   }
 
@@ -592,6 +765,8 @@ public final class PtvEvalRunner {
     // to reach an endpoint whose noise floor swallows any plausible effect.
     private int maxRounds = 16;
     private Path out = Path.of("build", "ptv-eval", "results.csv");
+    private boolean allowSelf = false;
+    private boolean overwrite = false;
 
     static Options parse(final String[] args) {
       final Options o = new Options();
@@ -614,6 +789,8 @@ public final class PtvEvalRunner {
           case "--candidate" -> o.candidate = value;
           case "--baseline" -> o.baseline = value;
           case "--deterministic" -> o.deterministic = Boolean.parseBoolean(value);
+          case "--allow-self" -> o.allowSelf = Boolean.parseBoolean(value);
+          case "--overwrite" -> o.overwrite = Boolean.parseBoolean(value);
           case "--out" -> o.out = Path.of(value);
           default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
         }

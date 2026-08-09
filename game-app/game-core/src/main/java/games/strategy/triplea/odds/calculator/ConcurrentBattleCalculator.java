@@ -152,6 +152,9 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
             GameDataUtils.gameDataToBytes(data, GameDataManager.Options.forBattleCalculator())
                 .orElse(null);
         if (serializedData == null) {
+          // Serialization failed (plausible under memory pressure); the pool stays empty and
+          // every subsequent calculate() returns the NaN-odds empty result.
+          DeterministicRun.recordDegradedPoolBuild();
           return false;
         }
       }
@@ -183,6 +186,7 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
           // The parallel stream above is filtered on a cancellation flag, so a concurrent
           // cancel silently yields a smaller pool. The run count is split across the pool, so
           // that changes the AI's simulation sample on some runs and not others.
+          DeterministicRun.recordDegradedPoolBuild();
           log.warn(
               "PTVDIAG-POOL degraded to {} workers, expected {}",
               workers.size(),
@@ -193,6 +197,11 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
     if (cancelCurrentOperation.get() < 0 || data == null) {
       // we could have cancelled while setting data, so clear the workers again if so
       workers.clear();
+      // Deliberately NOT recorded as a degraded build: a cancelled exit here is the routine
+      // supersede pattern -- every prepareData() rebind cancels the still-queued previous build,
+      // ~6 times per round in normal play. The harmful outcomes are covered elsewhere: a failed
+      // serialization is recorded above, and a calculate() that actually runs against an empty
+      // pool is recorded as an empty-pool result.
       return false;
     }
     // should make sure that all workers have their game data set before
@@ -219,6 +228,7 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
     synchronized (mutexCalcIsRunning) {
       final long start = System.currentTimeMillis();
       if (!isDataSet || workers.isEmpty()) {
+        DeterministicRun.recordEmptyPoolResult();
         if (DeterministicRun.isEnabled()) {
           log.warn(
               "PTVDIAG-EMPTY calculate() returned no results (isDataSet={}, workers={});"
@@ -271,11 +281,16 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
                   .flatMap(Collection::stream)
                   .collect(Collectors.toList()));
       results.setTime(System.currentTimeMillis() - start);
-      if (DeterministicRun.isEnabled()) {
+      if (DeterministicRun.isOddsDumpEnabled()) {
         // Inputs as well as outputs. The fingerprint alone proves the AI got different odds but
         // not whether it asked a different question; comparing the arguments separates "the
         // calculator is unreliable" from "the AI derived a different battle", which need
         // opposite fixes.
+        //
+        // Guarded on the dump being configured, not merely on determinism: this block sorts and
+        // joins every unit collection on every call, inside the calculator mutex, and a game
+        // makes tens of thousands of calls. recordOddsCall would discard the string anyway when
+        // no dump file is set; building it eagerly was pure hot-path cost in every scored run.
         DeterministicRun.recordOddsCall(
             location.getName()
                 + "|atk="
@@ -308,8 +323,11 @@ public class ConcurrentBattleCalculator implements IBattleCalculator {
                 + results.getAttackerWinPercent()
                 + " rolls="
                 + results.getRollCount());
+      }
+      if (DeterministicRun.isEnabled()) {
         // Hashed on the figures the AI actually reads, not on the raw battle list: those are
-        // what drive decisions, and they are stable to describe.
+        // what drive decisions, and they are stable to describe. Always on under determinism
+        // (it is the reproducibility fingerprint), unlike the per-call dump above.
         long hash = Double.doubleToLongBits(results.getAttackerWinPercent());
         hash = hash * 31L + Double.doubleToLongBits(results.getDefenderWinPercent());
         hash = hash * 31L + Double.doubleToLongBits(results.getAverageAttackingUnitsLeft());

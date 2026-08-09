@@ -36,7 +36,10 @@ public enum PtvFeature {
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 
-  private static final Set<PtvFeature> SELECTED = parse(System.getProperty(SYSTEM_PROPERTY));
+  // Set.copyOf: every PTV ProData holds a reference to this set, so a mutable EnumSet here would
+  // let one stray remove() silently reconfigure every PTV bot mid-run.
+  private static final Set<PtvFeature> SELECTED =
+      Set.copyOf(parse(System.getProperty(SYSTEM_PROPERTY)));
 
   /** The features enabled for this JVM. Read once; an evaluation run does not change mid-flight. */
   public static Set<PtvFeature> selected() {
@@ -50,6 +53,10 @@ public enum PtvFeature {
 
   private static Set<PtvFeature> parse(final String value) {
     if (value == null || value.isBlank()) {
+      // Logged like every other path: the default (ALL features) is the one selection that used
+      // to leave no trace, so a shard launch that dropped its -D flag looked identical to a
+      // deliberate single-feature run.
+      log.info("PTV features: ALL (property {} not set)", SYSTEM_PROPERTY);
       return EnumSet.allOf(PtvFeature.class);
     }
     if (value.trim().equalsIgnoreCase("none")) {

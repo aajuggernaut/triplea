@@ -5,6 +5,7 @@ import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.GameState;
 import games.strategy.engine.data.Territory;
 import games.strategy.engine.data.Unit;
+import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.Properties;
 import games.strategy.triplea.ai.pro.ProData;
 import games.strategy.triplea.ai.pro.data.ProBattleResult;
@@ -237,7 +238,13 @@ public class ProOddsCalculator {
       final boolean retreatWhenOnlyAirLeft) {
     final GameData data = t.getData();
 
-    if (stopped || attackingUnits.isEmpty() || defendingUnits.isEmpty()) {
+    if (stopped) {
+      // One-way latch: once set, every query for the rest of this AI's life gets the all-zero
+      // result. Recorded so a game that played on after a stop cannot be silently scored.
+      DeterministicRun.recordStoppedCalcQuery();
+      return new ProBattleResult();
+    }
+    if (attackingUnits.isEmpty() || defendingUnits.isEmpty()) {
       return new ProBattleResult();
     }
 

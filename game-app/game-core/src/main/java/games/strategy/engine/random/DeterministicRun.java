@@ -99,6 +99,17 @@ public final class DeterministicRun {
 
   private static final AtomicLong oddsRollingHash = new AtomicLong();
 
+  // Per-game diagnostic tripwires, reset by enable(). Non-zero means the AI decided on missing or
+  // corrupted odds at some point in the game: an empty worker pool returns AggregateResults(0)
+  // whose win percent is NaN, a cancelled worker returns fewer simulations than it was assigned,
+  // and a stopped ProOddsCalculator answers every query with an all-zero result for the rest of
+  // that AI's life. All three are invisible on the board and in the log of a sharded run, so the
+  // eval runner writes these counters into the CSV row and refuses to score a contaminated game.
+  private static final AtomicLong emptyPoolResults = new AtomicLong();
+  private static final AtomicLong degradedPoolBuilds = new AtomicLong();
+  private static final AtomicLong truncatedCalcRuns = new AtomicLong();
+  private static final AtomicLong stoppedCalcQueries = new AtomicLong();
+
   private static final Object policyLock = new Object();
   private static SplittableRandom policyRandom = new SplittableRandom(0L);
 
@@ -175,6 +186,10 @@ public final class DeterministicRun {
     oddsRollingHash.set(0L);
     offThreadUnitIds.set(0L);
     firstOffThreadTrace = null;
+    emptyPoolResults.set(0L);
+    degradedPoolBuilds.set(0L);
+    truncatedCalcRuns.set(0L);
+    stoppedCalcQueries.set(0L);
     synchronized (policyLock) {
       policyRandom = new SplittableRandom(seed ^ 0x2545F4914F6CDD1DL);
     }
@@ -314,6 +329,55 @@ public final class DeterministicRun {
     synchronized (oddsDumpLock) {
       oddsDump.println(oddsCalls.get() + " " + description);
     }
+  }
+
+  /** True when {@code -Dtriplea.ai.ptv.oddsDump} is set and per-call descriptions will be kept. */
+  public static boolean isOddsDumpEnabled() {
+    return enabled && oddsDump != null;
+  }
+
+  /** The calculator answered with no results at all (empty worker pool); the AI saw NaN odds. */
+  public static void recordEmptyPoolResult() {
+    if (enabled) {
+      emptyPoolResults.incrementAndGet();
+    }
+  }
+
+  /** A worker-pool build was cancelled or failed while a game was live. */
+  public static void recordDegradedPoolBuild() {
+    if (enabled) {
+      degradedPoolBuilds.incrementAndGet();
+    }
+  }
+
+  /** A worker returned fewer simulations than assigned because it was cancelled mid-loop. */
+  public static void recordTruncatedCalcRun() {
+    if (enabled) {
+      truncatedCalcRuns.incrementAndGet();
+    }
+  }
+
+  /** A stopped ProOddsCalculator answered a battle query with the all-zero result. */
+  public static void recordStoppedCalcQuery() {
+    if (enabled) {
+      stoppedCalcQueries.incrementAndGet();
+    }
+  }
+
+  public static long emptyPoolResults() {
+    return emptyPoolResults.get();
+  }
+
+  public static long degradedPoolBuilds() {
+    return degradedPoolBuilds.get();
+  }
+
+  public static long truncatedCalcRuns() {
+    return truncatedCalcRuns.get();
+  }
+
+  public static long stoppedCalcQueries() {
+    return stoppedCalcQueries.get();
   }
 
   public static long oddsCalls() {

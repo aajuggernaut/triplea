@@ -378,8 +378,18 @@ public class ServerGame extends AbstractGame {
         log.warn("Could not stop delegate execution.");
         // Try one more time
         if (!delegateExecutionManager.blockDelegateExecution(16_000)) {
-          log.error("Exiting...");
-          ExitStatus.FAILURE.exit();
+          if (Boolean.getBoolean("triplea.ai.ptv.eval")) {
+            // A batch eval runner plays many games in one JVM; a wall-clock System.exit here
+            // would kill the whole batch because one game's teardown stalled under load,
+            // truncating the CSV with no marker. Proceed with shutdown instead -- the next
+            // game's setup replaces every resource this one holds.
+            log.error(
+                "Delegate execution did not stop after 32s; continuing without exiting"
+                    + " (eval mode).");
+          } else {
+            log.error("Exiting...");
+            ExitStatus.FAILURE.exit();
+          }
         }
       }
     } catch (final InterruptedException e) {

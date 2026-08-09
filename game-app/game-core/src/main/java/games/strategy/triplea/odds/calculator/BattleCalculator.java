@@ -148,6 +148,12 @@ class BattleCalculator implements IBattleCalculator {
       }
       aggregateResults.setTime(System.currentTimeMillis() - start);
       aggregateResults.setRunThreadName(Thread.currentThread().getName());
+      if (aggregateResults.getResults().size() < runCount) {
+        // A cancel landed mid-loop: the caller merges whatever came back with no size check, so
+        // the AI averages over a truncation-biased sample and nothing else records that it
+        // happened -- the next line erases the evidence.
+        DeterministicRun.recordTruncatedCalcRun();
+      }
       cancelled = false;
       return aggregateResults;
     } finally {

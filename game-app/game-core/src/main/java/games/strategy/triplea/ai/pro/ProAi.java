@@ -31,6 +31,17 @@ public class ProAi extends AbstractProAi {
     concurrentCalc.setGameData(null);
   }
 
+  /**
+   * Clears the shared calculator's game data and returns the future that completes when the async
+   * teardown has actually finished. {@link #stopGame} fires the same teardown but discards the
+   * future, so a batch runner that starts the next game immediately can otherwise race the previous
+   * game's teardown: {@code createWorkers} reads {@code DeterministicRun.isEnabled()} more than
+   * once, and the runner flips that flag between games. Join this before re-enabling.
+   */
+  public static java.util.concurrent.CompletableFuture<Boolean> drainSharedCalculator() {
+    return concurrentCalc.setGameData(null);
+  }
+
   @Override
   protected void prepareData(final GameData data) {
     concurrentCalc.setGameData(data);
