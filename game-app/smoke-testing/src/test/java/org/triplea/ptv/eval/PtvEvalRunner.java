@@ -9,6 +9,7 @@ import games.strategy.engine.framework.startup.ui.PlayerTypes;
 import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.ai.pro.ProAi;
 import games.strategy.triplea.ai.pro.PtvFeature;
+import games.strategy.triplea.ai.pro.logging.PtvTrace;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.delegate.EndRoundDelegate;
 import games.strategy.triplea.delegate.Matches;
@@ -193,7 +194,8 @@ public final class PtvEvalRunner {
                   baseline,
                   options.maxRounds,
                   options.deterministic,
-                  checkpointRounds);
+                  checkpointRounds,
+                  options);
           outcomes.add(outcome);
           csv.println(outcome.toCsvRow());
           csv.flush();
@@ -300,7 +302,8 @@ public final class PtvEvalRunner {
       final PlayerTypes.Type baseline,
       final int maxRounds,
       final boolean deterministic,
-      final List<Integer> checkpointRounds) {
+      final List<Integer> checkpointRounds,
+      final Options options) {
 
     final long startNanos = System.nanoTime();
     final String opponentSide = candidateSide.equals(AXIS) ? ALLIES : AXIS;
@@ -311,6 +314,15 @@ public final class PtvEvalRunner {
       // the starting units are created during parsing.
       if (deterministic) {
         DeterministicRun.enable(seed);
+      }
+      if (options.traceDir != null) {
+        try {
+          PtvTrace.begin(
+              options.traceDir.resolve("seed" + seed + "-" + candidateSide + ".trace.txt"));
+        } catch (final IOException e) {
+          // A trace is a convenience artifact; failing to open one must not fail the game.
+          log.error("Could not open trace file in {}", options.traceDir, e);
+        }
       }
       game =
           GameTestUtils.setUpGameWithAis(
@@ -330,6 +342,12 @@ public final class PtvEvalRunner {
             checkpoints.add(
                 new Checkpoint(
                     round, scoreAlliance(data, candidateSide), scoreAlliance(data, opponentSide)));
+          }
+          if (options.snapshotDir != null && options.snapshotRounds.contains(round)) {
+            // A .tsvg of the position entering this round: the game's own golden-position
+            // generator for the PtvPositionHarness. Deterministic replay means the same seed
+            // always yields this exact position, so a snapshot is a bookmark, not a fork.
+            writeSnapshot(data, options.snapshotDir, seed, candidateSide, round);
           }
         }
       }
@@ -385,9 +403,25 @@ public final class PtvEvalRunner {
       // more than once while it runs -- joining here closes the window in which the next game's
       // enable()/disable() flip could be observed mid-teardown.
       ProAi.drainSharedCalculator().join();
+      PtvTrace.end();
       // Cleared per game rather than per run, so the unit-id sequence restarts from the same point
       // for every seed instead of carrying over from whatever the previous game consumed.
       DeterministicRun.disable();
+    }
+  }
+
+  private static void writeSnapshot(
+      final GameData data, final Path dir, final long seed, final String side, final int round) {
+    final Path file = dir.resolve("seed" + seed + "-" + side + "-r" + round + ".tsvg");
+    try {
+      Files.createDirectories(dir);
+      try (var out = Files.newOutputStream(file)) {
+        games.strategy.engine.framework.GameDataManager.saveGame(out, data);
+      }
+      log.info("Snapshot written: {}", file);
+    } catch (final IOException e) {
+      // A failed snapshot must not kill the game -- it is a convenience artifact.
+      log.error("Failed to write snapshot {}", file, e);
     }
   }
 
@@ -767,6 +801,12 @@ public final class PtvEvalRunner {
     private Path out = Path.of("build", "ptv-eval", "results.csv");
     private boolean allowSelf = false;
     private boolean overwrite = false;
+    // W23: write a .tsvg snapshot on entering each listed round -- bot games producing their own
+    // golden positions for the PtvPositionHarness. Off unless both are given.
+    private List<Integer> snapshotRounds = List.of();
+    private Path snapshotDir = null;
+    // W23: per-game unfiltered decision-trace files. Off in scored runs.
+    private Path traceDir = null;
 
     static Options parse(final String[] args) {
       final Options o = new Options();
@@ -791,6 +831,11 @@ public final class PtvEvalRunner {
           case "--deterministic" -> o.deterministic = Boolean.parseBoolean(value);
           case "--allow-self" -> o.allowSelf = Boolean.parseBoolean(value);
           case "--overwrite" -> o.overwrite = Boolean.parseBoolean(value);
+          case "--snapshot-rounds" ->
+              o.snapshotRounds =
+                  Arrays.stream(value.split(",")).map(String::trim).map(Integer::parseInt).toList();
+          case "--snapshot-dir" -> o.snapshotDir = Path.of(value);
+          case "--trace-dir" -> o.traceDir = Path.of(value);
           case "--out" -> o.out = Path.of(value);
           default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
         }

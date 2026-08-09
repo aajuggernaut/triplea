@@ -53,6 +53,7 @@ public final class ProLogger {
     if (headless) {
       headlessLog.info("===== Round {} : {} =====", round, playerName);
     }
+    PtvTrace.marker("===== Round " + round + " : " + playerName + " =====");
   }
 
   public static void warn(final String message) {
@@ -91,6 +92,11 @@ public final class ProLogger {
    * in mind while adding new logging code.
    */
   public static void log(final Level level, final String message, final @Nullable Throwable t) {
+    // The trace sink sees everything, unfiltered, before any level or settings check: its whole
+    // purpose is the candidate-level detail the filters exist to suppress.
+    if (PtvTrace.isActive()) {
+      PtvTrace.write(level, formatMessage(message, t, level));
+    }
     // Mirrored before the settings check: those settings are a property of the Swing debug window,
     // which does not exist headlessly.
     if (headless && level.intValue() >= headlessLevel.intValue()) {

@@ -78,6 +78,30 @@ public class GameTestUtils {
     GameData gameData =
         GameParser.parse(xmlFilePath, false)
             .orElseThrow(() -> new RuntimeException("Error parsing file: " + xmlFilePath));
+    return setUpGameWithAis(gameData, playerTypeAssigner);
+  }
+
+  /**
+   * Sets up an all-AI game from a saved game (.tsvg) rather than a map XML. The game resumes from
+   * the round and step stored in the save, which is what makes a "position harness" possible: load
+   * a position of interest, run a single AI phase against it, and inspect the decision -- seconds
+   * instead of replaying a full game to reach the same spot. Saves from the GUI client load here
+   * because {@link games.strategy.engine.framework.GameDataManager} is plain IO with no Swing
+   * dependency.
+   */
+  public static ServerGame setUpGameFromSave(
+      Path savePath, Function<GameData, Map<String, PlayerTypes.Type>> playerTypeAssigner) {
+    if (!Files.exists(savePath)) {
+      throw new IllegalStateException("Save file does not exist: " + savePath.toAbsolutePath());
+    }
+    GameData gameData =
+        games.strategy.engine.framework.GameDataManager.loadGame(savePath)
+            .orElseThrow(() -> new RuntimeException("Error loading save: " + savePath));
+    return setUpGameWithAis(gameData, playerTypeAssigner);
+  }
+
+  private static ServerGame setUpGameWithAis(
+      GameData gameData, Function<GameData, Map<String, PlayerTypes.Type>> playerTypeAssigner) {
     Map<String, PlayerTypes.Type> playerTypes = playerTypeAssigner.apply(gameData);
     Set<Player> gamePlayers = gameData.getGameLoader().newPlayers(playerTypes);
     HeadlessLaunchAction launchAction = new HeadlessLaunchAction(mock(HeadlessGameServer.class));
