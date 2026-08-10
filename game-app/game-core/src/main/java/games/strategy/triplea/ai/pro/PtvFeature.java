@@ -44,7 +44,19 @@ public enum PtvFeature {
    * land if loaded, loading position or safety if empty -- which were previously unreachable for
    * loaded ships. Diagnosis: notes/006 in the companion repo.
    */
-  NO_PARK_LOADED;
+  NO_PARK_LOADED,
+
+  /**
+   * W4: garrison Japanese-held Chinese guerrilla territories with one land unit.
+   *
+   * <p>PTV spawns a free Chinese infantry in any of 16 interior territories that is Japanese-owned
+   * and holds no Axis ground unit at the Chinese trigger check -- every exposed round is a free
+   * enemy unit. Stock ProAi's defend-with-one-unit pass only considers empty territories adjacent
+   * to enemy land, which the deep interior is not. This adds the exposed guerrilla territories to
+   * that pass's list; its existing machinery (cheapest defender, cost guard) does the rest.
+   * Measured exposure without it: 3-8 territory-rounds per 10-round game (probe batch 2026-08-09).
+   */
+  GARRISON_CHINA;
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 

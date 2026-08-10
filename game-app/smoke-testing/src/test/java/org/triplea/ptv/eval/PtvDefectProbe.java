@@ -124,11 +124,136 @@ public final class PtvDefectProbe {
     return found;
   }
 
-  /** Every check, run together. */
+  /**
+   * The 16 territories whose PTV guerrilla triggers spawn a Chinese infantry when Japanese-owned
+   * and empty of Japanese ground units. Read from the map XML's {@code
+   * triggerAttachment_Chinese_Guerilla_*} placement options; the garrison test mirrors the
+   * trigger's own {@code unitPresence} list -- ground types only, so an aaGun does not garrison.
+   */
+  private static final List<String> GUERRILLA_TERRITORIES =
+      List.of(
+          "Anhwe",
+          "Chahar",
+          "Eastern Sinkiang",
+          "Honan",
+          "Hopei",
+          "Hunan",
+          "Inner Mongolia",
+          "Kansu",
+          "Kiangsi",
+          "Kweichow",
+          "Northern Sinkiang",
+          "Shansi",
+          "Szechwan",
+          "Tsinghai",
+          "Western Sinkiang",
+          "Yunnan");
+
+  private static final List<String> GARRISON_UNIT_TYPES =
+      List.of("infantry", "artillery", "mech_infantry", "armour", "marine");
+
+  /**
+   * W4 exposure: Japanese-owned guerrilla territories with no Japanese ground garrison at round end
+   * -- each is a guaranteed free Chinese infantry next trigger check. Human baseline from the
+   * 15-game corpus: ~0.7 actual spawns per game; the bot is measured on the exposure count, which
+   * upper-bounds spawns and is readable from the board.
+   */
+  public static List<Occurrence> ungarrisonedGuerrillaTerritories(
+      final GameData data, final int round) {
+    final List<Occurrence> found = new ArrayList<>();
+    final GamePlayer japanese = data.getPlayerList().getPlayerId("Japanese");
+    if (japanese == null) {
+      return found;
+    }
+    for (final String name : GUERRILLA_TERRITORIES) {
+      final Territory t = data.getMap().getTerritoryOrNull(name);
+      if (t == null || !t.getOwner().equals(japanese)) {
+        continue;
+      }
+      final boolean garrisoned =
+          t.getUnits().stream()
+              .anyMatch(
+                  u ->
+                      u.getOwner().equals(japanese)
+                          && GARRISON_UNIT_TYPES.contains(u.getType().getName()));
+      if (!garrisoned) {
+        found.add(
+            new Occurrence(
+                round, japanese.getName(), "GUERRILLA_EXPOSED", name + " held but ungarrisoned"));
+      }
+    }
+    return found;
+  }
+
+  /**
+   * W12 tempo: first round each watched territory is Japanese-owned. Corpus benchmark:
+   * south-committed human Japan takes Manilla r1-r2 (8 of 10-11 games) and Kwangtung r1-r2 (9).
+   * Caller keeps {@code alreadyCaptured} across rounds so each capture reports once.
+   */
+  public static List<Occurrence> japaneseCaptures(
+      final GameData data, final int round, final java.util.Set<String> alreadyCaptured) {
+    final List<Occurrence> found = new ArrayList<>();
+    final GamePlayer japanese = data.getPlayerList().getPlayerId("Japanese");
+    if (japanese == null) {
+      return found;
+    }
+    for (final String name : List.of("Manilla", "Kwangtung", "Davao")) {
+      if (alreadyCaptured.contains(name)) {
+        continue;
+      }
+      final Territory t = data.getMap().getTerritoryOrNull(name);
+      if (t != null && t.getOwner().equals(japanese)) {
+        alreadyCaptured.add(name);
+        found.add(
+            new Occurrence(round, japanese.getName(), "JAPAN_TOOK", name + " by round " + round));
+      }
+    }
+    return found;
+  }
+
+  /**
+   * W6 exposure: combat ships ending the round in a sea zone with no land neighbor at all -- where
+   * no base can support them and nothing can be threatened amphibiously from them. Deliberately raw
+   * (a deliberate out-of-range hover also counts): it is an exposure count for A/B comparison, not
+   * an accusation per instance.
+   */
+  public static List<Occurrence> fleetsAdriftAtSea(final GameData data, final int round) {
+    final List<Occurrence> found = new ArrayList<>();
+    for (final Territory t : data.getMap().getTerritories()) {
+      if (!t.isWater()) {
+        continue;
+      }
+      final boolean hasLandNeighbor =
+          data.getMap().getNeighbors(t).stream().anyMatch(n -> !n.isWater());
+      if (hasLandNeighbor) {
+        continue;
+      }
+      final Map<GamePlayer, Long> shipsByOwner = new LinkedHashMap<>();
+      for (final Unit unit : t.getUnits()) {
+        final String type = unit.getType().getName();
+        if (List.of("destroyer", "cruiser", "carrier", "battleship", "submarine").contains(type)) {
+          shipsByOwner.merge(unit.getOwner(), 1L, Long::sum);
+        }
+      }
+      shipsByOwner.forEach(
+          (owner, count) ->
+              found.add(
+                  new Occurrence(
+                      round,
+                      owner.getName(),
+                      "FLEET_ADRIFT",
+                      count + " warships in landless " + t.getName())));
+    }
+    return found;
+  }
+
+  /** Every stateless check, run together. */
   public static List<Occurrence> all(final GameData data, final int round) {
     final List<Occurrence> found = new ArrayList<>();
     found.addAll(loadedTransportsNextToFriendlyLand(data, round));
     found.addAll(loadedTransportsAtSea(data, round));
+    found.addAll(ungarrisonedGuerrillaTerritories(data, round));
+    found.addAll(fleetsAdriftAtSea(data, round));
     return found;
   }
 

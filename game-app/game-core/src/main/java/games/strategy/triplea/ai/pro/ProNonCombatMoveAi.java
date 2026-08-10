@@ -63,6 +63,35 @@ class ProNonCombatMoveAi {
 
   private final ProOddsCalculator calc;
   private final ProData proData;
+
+  /**
+   * The 16 territories whose PTV guerrilla triggers spawn a Chinese infantry when Japanese-owned
+   * and empty of allied ground units, and the unit types the trigger counts as a garrison (its own
+   * {@code unitPresence} list -- an aaGun does not qualify). Read from the map XML's {@code
+   * triggerAttachment_Chinese_Guerilla_*} attachments; the map is frozen at v6.4, so these are
+   * constants, not configuration.
+   */
+  private static final List<String> PTV_GUERRILLA_TERRITORIES =
+      List.of(
+          "Anhwe",
+          "Chahar",
+          "Eastern Sinkiang",
+          "Honan",
+          "Hopei",
+          "Hunan",
+          "Inner Mongolia",
+          "Kansu",
+          "Kiangsi",
+          "Kweichow",
+          "Northern Sinkiang",
+          "Shansi",
+          "Szechwan",
+          "Tsinghai",
+          "Western Sinkiang",
+          "Yunnan");
+
+  private static final List<String> PTV_GARRISON_UNIT_TYPES =
+      List.of("infantry", "artillery", "mech_infantry", "armour", "marine");
   private GameData data;
   private GamePlayer player;
   private Map<Unit, Territory> unitTerritoryMap;
@@ -349,6 +378,38 @@ class ProNonCombatMoveAi {
           moveMap.get(t).getCantMoveUnits().stream().anyMatch(alliedAndNotInfra);
       if (!hasAlliedLandUnits && hasNeighborOwnedByEnemyWithLandUnit.test(t)) {
         territoriesToDefendWithOneUnit.add(t);
+      }
+    }
+
+    if (proData.isPtvFeature(PtvFeature.GARRISON_CHINA) && player.getName().equals("Japanese")) {
+      // W4: PTV spawns a free Chinese infantry in any of these territories that ends the trigger
+      // check Japanese-owned with no Axis ground unit present. The stock collection above only
+      // covers empty territories adjacent to enemy land, which the deep interior is not, so the
+      // exposed ones are added here and the pass's existing machinery garrisons them.
+      for (final String name : PTV_GUERRILLA_TERRITORIES) {
+        final Territory t = data.getMap().getTerritoryOrNull(name);
+        if (t == null
+            || !t.getOwner().equals(player)
+            || territoriesToDefendWithOneUnit.contains(t)
+            || !moveMap.containsKey(t)) {
+          continue;
+        }
+        // Two tests folded together. Unit types mirror the trigger's own garrison list (ground
+        // only; an aaGun does not count). Crucially the units come from getCantMoveUnits(), not
+        // the board: a mobile unit standing here at planning time can march off later in this
+        // same non-combat move, which is exactly how the first version of this patch failed --
+        // Honan looked garrisoned, its units left, and the spawn fired anyway. Stock's own
+        // collection loop above tests cantMove for the same reason.
+        final boolean garrisoned =
+            moveMap.get(t).getCantMoveUnits().stream()
+                .anyMatch(
+                    u ->
+                        data.getRelationshipTracker().isAllied(u.getOwner(), player)
+                            && PTV_GARRISON_UNIT_TYPES.contains(u.getType().getName()));
+        if (!garrisoned) {
+          territoriesToDefendWithOneUnit.add(t);
+          ProLogger.debug(t + " added as ungarrisoned PTV guerrilla territory");
+        }
       }
     }
 

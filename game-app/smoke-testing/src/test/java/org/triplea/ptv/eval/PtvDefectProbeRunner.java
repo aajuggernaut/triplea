@@ -56,6 +56,7 @@ public final class PtvDefectProbeRunner {
         };
 
     final List<PtvDefectProbe.Occurrence> occurrences = new ArrayList<>();
+    final java.util.Set<String> capturedWatchlist = new java.util.HashSet<>();
     Map<String, String> previousPositions = Map.of();
     ServerGame game = null;
     try {
@@ -84,6 +85,7 @@ public final class PtvDefectProbeRunner {
             final List<PtvDefectProbe.Occurrence> found = PtvDefectProbe.all(data, lastRound);
             final Map<String, String> positions = PtvDefectProbe.loadedTransportPositions(data);
             found.addAll(PtvDefectProbe.stalledCargo(previousPositions, positions, lastRound));
+            found.addAll(PtvDefectProbe.japaneseCaptures(data, lastRound, capturedWatchlist));
             previousPositions = positions;
             occurrences.addAll(found);
             log.info("round {} complete: {} defect occurrences", lastRound, found.size());
