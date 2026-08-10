@@ -168,7 +168,12 @@ public final class PtvEvalRunner {
       csv.println("# engine=" + engineBuildId());
       csv.println("# candidate=" + options.candidate + " baseline=" + options.baseline);
       csv.println("# side=" + options.side);
-      csv.println("# features=" + PtvFeature.selected());
+      csv.println(
+          "# features="
+              + PtvFeature.selected().stream()
+                  .map(Enum::name)
+                  .sorted()
+                  .collect(Collectors.joining(",")));
       csv.println("# workers=" + DeterministicRun.workerCount());
       csv.println(
           "# heapMaxMb="
