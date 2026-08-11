@@ -247,6 +247,129 @@ public final class PtvDefectProbe {
     return found;
   }
 
+  /**
+   * W5 exposure: owned territories worth keeping (production >= 2 or a victory city) that end the
+   * round with no allied ground defender while an enemy stands next door -- capture valued,
+   * retention not. Threat = an adjacent enemy-owned land territory, or an adjacent sea zone holding
+   * units at war with the owner (amphibious reach approximated by adjacency).
+   */
+  public static List<Occurrence> undefendedValuableTerritories(
+      final GameData data, final int round) {
+    final List<Occurrence> found = new ArrayList<>();
+    for (final Territory t : data.getMap().getTerritories()) {
+      if (t.isWater() || t.getOwner().isNull()) {
+        continue;
+      }
+      final var ta = games.strategy.triplea.attachments.TerritoryAttachment.get(t).orElse(null);
+      if (ta == null || (ta.getProduction() < 2 && ta.getVictoryCity() == 0)) {
+        continue;
+      }
+      final GamePlayer owner = t.getOwner();
+      final boolean defended =
+          t.getUnits().stream().anyMatch(ProMatches.unitIsAlliedLandAndNotInfra(owner));
+      if (defended) {
+        continue;
+      }
+      final boolean threatened =
+          data.getMap().getNeighbors(t).stream()
+              .anyMatch(
+                  n ->
+                      (!n.isWater()
+                              && !n.getOwner().isNull()
+                              && data.getRelationshipTracker().isAtWar(owner, n.getOwner()))
+                          || (n.isWater()
+                              && n.getUnits().stream()
+                                  .anyMatch(
+                                      u ->
+                                          data.getRelationshipTracker()
+                                              .isAtWar(owner, u.getOwner()))));
+      if (threatened) {
+        found.add(
+            new Occurrence(
+                round,
+                owner.getName(),
+                "UNDEFENDED_VALUE",
+                t.getName()
+                    + " (prod "
+                    + ta.getProduction()
+                    + (ta.getVictoryCity() > 0 ? ", VC" : "")
+                    + ") empty with enemy adjacent"));
+      }
+    }
+    return found;
+  }
+
+  /**
+   * W5 churn: a territory that changed hands and flipped back within two rounds -- ground taken and
+   * immediately lost, the sharpest board-readable retention signature. Caller keeps both maps
+   * across rounds: {@code owners} is last round's owner per territory, {@code captures} records
+   * (round, capturer-side marker) for the flip-back window.
+   */
+  public static List<Occurrence> retakenFast(
+      final Map<String, String> owners,
+      final Map<String, Integer> captures,
+      final GameData data,
+      final int round) {
+    final List<Occurrence> found = new ArrayList<>();
+    for (final Territory t : data.getMap().getTerritories()) {
+      if (t.isWater()) {
+        continue;
+      }
+      final String now = t.getOwner().getName();
+      final String before = owners.put(t.getName(), now);
+      if (before == null || before.equals(now)) {
+        continue;
+      }
+      final Integer capturedRound = captures.get(t.getName());
+      if (capturedRound != null && round - capturedRound <= 2) {
+        found.add(
+            new Occurrence(
+                round,
+                data.getPlayerList().getPlayerId(before) == null ? before : before,
+                "RETAKEN_FAST",
+                t.getName() + " taken r" + capturedRound + ", lost r" + round));
+      }
+      captures.put(t.getName(), round);
+    }
+    return found;
+  }
+
+  /**
+   * W14 watch: Norway and Finland specifically -- the objective-bearing Scandinavian periphery.
+   * German-held-but-empty is the exposure; ownership flipping away from Germans is the loss event
+   * (the human record's game 15: "Allies held Norway for much of the game, Axis were out-incomed").
+   */
+  public static List<Occurrence> scandinaviaWatch(final GameData data, final int round) {
+    final List<Occurrence> found = new ArrayList<>();
+    final GamePlayer germans = data.getPlayerList().getPlayerId("Germans");
+    if (germans == null) {
+      return found;
+    }
+    for (final String name : List.of("Norway", "Finland")) {
+      final Territory t = data.getMap().getTerritoryOrNull(name);
+      if (t == null) {
+        continue;
+      }
+      if (t.getOwner().equals(germans)) {
+        final boolean defended =
+            t.getUnits().stream().anyMatch(ProMatches.unitIsAlliedLandAndNotInfra(germans));
+        if (!defended) {
+          found.add(
+              new Occurrence(
+                  round, germans.getName(), "SCANDINAVIA_UNDEFENDED", name + " held but empty"));
+        }
+      } else if (data.getRelationshipTracker().isAtWar(germans, t.getOwner())) {
+        found.add(
+            new Occurrence(
+                round,
+                germans.getName(),
+                "SCANDINAVIA_LOST",
+                name + " held by " + t.getOwner().getName()));
+      }
+    }
+    return found;
+  }
+
   /** Every stateless check, run together. */
   public static List<Occurrence> all(final GameData data, final int round) {
     final List<Occurrence> found = new ArrayList<>();

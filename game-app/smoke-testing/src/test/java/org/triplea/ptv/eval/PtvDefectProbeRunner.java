@@ -57,6 +57,8 @@ public final class PtvDefectProbeRunner {
 
     final List<PtvDefectProbe.Occurrence> occurrences = new ArrayList<>();
     final java.util.Set<String> capturedWatchlist = new java.util.HashSet<>();
+    final Map<String, String> territoryOwners = new HashMap<>();
+    final Map<String, Integer> captureRounds = new HashMap<>();
     Map<String, String> previousPositions = Map.of();
     ServerGame game = null;
     try {
@@ -86,6 +88,10 @@ public final class PtvDefectProbeRunner {
             final Map<String, String> positions = PtvDefectProbe.loadedTransportPositions(data);
             found.addAll(PtvDefectProbe.stalledCargo(previousPositions, positions, lastRound));
             found.addAll(PtvDefectProbe.japaneseCaptures(data, lastRound, capturedWatchlist));
+            found.addAll(PtvDefectProbe.undefendedValuableTerritories(data, lastRound));
+            found.addAll(
+                PtvDefectProbe.retakenFast(territoryOwners, captureRounds, data, lastRound));
+            found.addAll(PtvDefectProbe.scandinaviaWatch(data, lastRound));
             previousPositions = positions;
             occurrences.addAll(found);
             log.info("round {} complete: {} defect occurrences", lastRound, found.size());
