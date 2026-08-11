@@ -65,6 +65,13 @@ public enum PtvFeature {
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 
+  /** The features that have passed the two-tier measurement protocol. The GUI default. */
+  private static final Set<PtvFeature> ACCEPTED_STACK =
+      EnumSet.of(NO_PARK_LOADED, GARRISON_CHINA, NO_HIT_ATTACK_GUARD);
+
+  // Declared before SELECTED: parse() reads it during class initialization, and a later
+  // declaration is still null at that point -- which shipped as a crash on the default path,
+  // caught by the first no-property launch (the retention probe baselines).
   // Set.copyOf: every PTV ProData holds a reference to this set, so a mutable EnumSet here would
   // let one stray remove() silently reconfigure every PTV bot mid-run.
   private static final Set<PtvFeature> SELECTED =
@@ -79,10 +86,6 @@ public enum PtvFeature {
   static Set<PtvFeature> parseForTesting(final String value) {
     return parse(value);
   }
-
-  /** The features that have passed the two-tier measurement protocol. The GUI default. */
-  private static final Set<PtvFeature> ACCEPTED_STACK =
-      EnumSet.of(NO_PARK_LOADED, GARRISON_CHINA, NO_HIT_ATTACK_GUARD);
 
   private static Set<PtvFeature> parse(final String value) {
     if (value == null || value.isBlank()) {
