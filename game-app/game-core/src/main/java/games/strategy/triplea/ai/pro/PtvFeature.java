@@ -15,10 +15,15 @@ import lombok.extern.slf4j.Slf4j;
  * responsible or whether two of them were cancelling out. Each behaviour has exactly one gate in
  * the code, so separating them costs nothing and makes a run attributable.
  *
- * <p>Selected with {@code -Dtriplea.ai.ptv.features=OBJECTIVE_VALUE,MOBILITY_PURCHASE}; the default
- * is all of them, so ordinary play and existing runs are unaffected. {@code none} disables the lot,
- * which is useful as a sanity check: a {@code ptv} bot with no features should be indistinguishable
- * from stock, and if it is not, something other than the features differs.
+ * <p>Selected with {@code -Dtriplea.ai.ptv.features=NO_PARK_LOADED,GARRISON_CHINA}; the default
+ * (property absent — i.e. GUI sparring games) is the <b>accepted stack</b>: the features that have
+ * passed the two-tier measurement protocol, currently {@code NO_PARK_LOADED}, {@code
+ * GARRISON_CHINA} and {@code NO_HIT_ATTACK_GUARD}. It was originally all-of-them, but that shipped
+ * measured-harmful and unproven behaviours to every sparring game once the measurements existed (W3
+ * measured −1.29 VC on 2026-08-10; W2 undetectable at ±2 VC). Scored evaluation runs always pass an
+ * explicit list and are unaffected by the default. {@code none} disables the lot, which is useful
+ * as a sanity check: a {@code ptv} bot with no features should be indistinguishable from stock, and
+ * if it is not, something other than the features differs.
  */
 @Slf4j
 public enum PtvFeature {
@@ -75,13 +80,18 @@ public enum PtvFeature {
     return parse(value);
   }
 
+  /** The features that have passed the two-tier measurement protocol. The GUI default. */
+  private static final Set<PtvFeature> ACCEPTED_STACK =
+      EnumSet.of(NO_PARK_LOADED, GARRISON_CHINA, NO_HIT_ATTACK_GUARD);
+
   private static Set<PtvFeature> parse(final String value) {
     if (value == null || value.isBlank()) {
-      // Logged like every other path: the default (ALL features) is the one selection that used
-      // to leave no trace, so a shard launch that dropped its -D flag looked identical to a
-      // deliberate single-feature run.
-      log.info("PTV features: ALL (property {} not set)", SYSTEM_PROPERTY);
-      return EnumSet.allOf(PtvFeature.class);
+      // The default is the accepted stack, not all-of-them: a sparring game should get exactly
+      // the behaviours the measurements support. Logged like every other path so a shard launch
+      // that dropped its -D flag leaves a trace.
+      log.info(
+          "PTV features: accepted stack {} (property {} not set)", ACCEPTED_STACK, SYSTEM_PROPERTY);
+      return EnumSet.copyOf(ACCEPTED_STACK);
     }
     if (value.trim().equalsIgnoreCase("none")) {
       log.info("PTV features: none (a ptv bot will behave as stock ProAi)");
