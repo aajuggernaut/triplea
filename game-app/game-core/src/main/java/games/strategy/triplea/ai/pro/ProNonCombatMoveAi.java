@@ -413,6 +413,30 @@ class ProNonCombatMoveAi {
       }
     }
 
+    if (proData.isPtvFeature(PtvFeature.DEFEND_AMPHIB_THREAT)) {
+      // W5/W14: the stock collection above only sees threat that walks. Threat that sails is
+      // invisible, so a coastal objective whose land neighbors are friendly or neutral is
+      // stripped bare regardless of what stands offshore -- Norway goes empty from round 1 with
+      // a British battleship group two sea zones away. Ownership scope and the emptiness test
+      // mirror the passes above; the one-unit machinery (cheapest defender, cost guard) does
+      // the rest.
+      final Predicate<Territory> amphibiouslyThreatened =
+          ProMatches.territoryIsValuableAndAmphibiouslyThreatened(data, player);
+      for (final Territory t : moveMap.keySet()) {
+        if (t.isWater()
+            || !t.getOwner().equals(player)
+            || territoriesToDefendWithOneUnit.contains(t)) {
+          continue;
+        }
+        final boolean hasAlliedLandUnits =
+            moveMap.get(t).getCantMoveUnits().stream().anyMatch(alliedAndNotInfra);
+        if (!hasAlliedLandUnits && amphibiouslyThreatened.test(t)) {
+          territoriesToDefendWithOneUnit.add(t);
+          ProLogger.debug(t + " added as amphibiously threatened valuable territory");
+        }
+      }
+    }
+
     // Sort units by number of defend options and cost
     final Map<Unit, Set<Territory>> sortedUnitMoveOptions =
         ProSortMoveOptionsUtils.sortUnitMoveOptions(proData, unitMoveMap);

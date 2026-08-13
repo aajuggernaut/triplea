@@ -61,7 +61,24 @@ public enum PtvFeature {
    * that pass's list; its existing machinery (cheapest defender, cost guard) does the rest.
    * Measured exposure without it: 3-8 territory-rounds per 10-round game (probe batch 2026-08-09).
    */
-  GARRISON_CHINA;
+  GARRISON_CHINA,
+
+  /**
+   * W5/W14: keep one land unit in valuable coastal territories an enemy could assault by sea.
+   *
+   * <p>The defend-with-one-unit pass's threat test is "has a neighbor owned by an enemy with a land
+   * unit in it" -- threat that walks. Threat that sails is invisible to it, so territories whose
+   * land neighbors are friendly or neutral are stripped bare no matter what stands offshore: Norway
+   * (land neighbors Finland and Sweden) goes empty from round 1 while a British battleship group
+   * sits two sea zones away and a loaded transport three. The engine's own enemy-attack model sees
+   * the amphibious force perfectly -- it is computed three calls after this pass runs. This adds
+   * owned, valuable (production >= 2 or a victory city), unheld territories with potential-enemy
+   * sea presence within three water moves (transport movement plus the unload step) to the same
+   * pass; its existing machinery does the rest, exactly as GARRISON_CHINA. Measured without it:
+   * Norway/Finland spend ~11 of 20 round-slots in Allied hands per 10-round game vs one Norway loss
+   * in 15 human games (baselines 2026-08-11).
+   */
+  DEFEND_AMPHIB_THREAT;
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 

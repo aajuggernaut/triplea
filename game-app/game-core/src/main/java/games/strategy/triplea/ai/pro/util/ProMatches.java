@@ -11,6 +11,7 @@ import games.strategy.engine.data.Unit;
 import games.strategy.engine.data.UnitType;
 import games.strategy.engine.data.properties.GameProperties;
 import games.strategy.triplea.Properties;
+import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.delegate.AbstractMoveDelegate;
 import games.strategy.triplea.delegate.Matches;
 import games.strategy.triplea.delegate.TerritoryEffectHelper;
@@ -357,6 +358,33 @@ public final class ProMatches {
         Matches.isTerritoryOwnedByAnyOf(players)
             .and(Matches.territoryHasUnitsThatMatch(Matches.unitIsLand()));
     return Matches.territoryHasNeighborMatching(gameMap, territoryMatch);
+  }
+
+  /**
+   * PTV {@code DEFEND_AMPHIB_THREAT} (W5/W14): a land territory worth keeping -- production of at
+   * least 2 or a victory city -- with sea units of a potential enemy within three water moves of
+   * its coast (standard transport movement plus the unload step). This is the sailing counterpart
+   * of {@link #territoryHasNeighborOwnedByAndHasLandUnit}: the defend-with-one-unit pass runs
+   * before the territory manager computes real enemy attack options, so like the stock land test it
+   * must read threat straight off the board. Range matters because of turn order -- a fleet two
+   * zones out and a transport three zones out assault on the enemy's next turn without ever being
+   * adjacent during this player's planning.
+   */
+  public static Predicate<Territory> territoryIsValuableAndAmphibiouslyThreatened(
+      final GameState data, final GamePlayer player) {
+    final Predicate<Unit> potentialEnemySeaPresence =
+        Matches.unitIsOwnedByAnyOf(ProUtils.getPotentialEnemyPlayers(player));
+    return t -> {
+      if (t.isWater()) {
+        return false;
+      }
+      final TerritoryAttachment ta = TerritoryAttachment.get(t).orElse(null);
+      if (ta == null || (ta.getProduction() < 2 && ta.getVictoryCity() == 0)) {
+        return false;
+      }
+      return data.getMap().getNeighbors(t, 3, Matches.territoryIsWater()).stream()
+          .anyMatch(z -> z.anyUnitsMatch(potentialEnemySeaPresence));
+    };
   }
 
   static Predicate<Territory> territoryIsAlliedLandAndHasNoEnemyNeighbors(final GamePlayer player) {
