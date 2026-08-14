@@ -79,7 +79,22 @@ public enum PtvFeature {
    * Norway/Finland spend ~11 of 20 round-slots in Allied hands per 10-round game vs one Norway loss
    * in 15 human games (baselines 2026-08-11).
    */
-  DEFEND_AMPHIB_THREAT;
+  DEFEND_AMPHIB_THREAT,
+
+  /**
+   * W5b: let the main defense allocation reinforce valuable coasts under seaborne threat.
+   *
+   * <p>The escalation of DEFEND_AMPHIB_THREAT, aimed at the second consumer of the same blind spot:
+   * prioritizeDefendOptions removes any non-factory territory with no enemy <em>land</em> neighbor
+   * from the prioritized defense list ({@code isNotFactoryAndHasNoEnemyNeighbors}), so Norway is
+   * written off with {@code CanHold=true, MaxDefenders=14} on the books and the one-unit garrison
+   * stays a lone infantry -- which deters snipes but not the committed round-1 assault (2 infantry
+   * by sea + 4 air). This keeps owned, valuable, amphibiously threatened territories in the list;
+   * the allocator's own economics decide how much force they are worth. Separate flag because it
+   * redirects real force rather than pinning one cheap unit -- it must earn its place on its own
+   * measurement.
+   */
+  REINFORCE_AMPHIB_THREAT;
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 

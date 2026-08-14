@@ -664,6 +664,16 @@ class ProNonCombatMoveAi {
     final List<ProTerritory> prioritizedTerritories = new ArrayList<>(moveMap.values());
     prioritizedTerritories.sort(Comparator.comparingDouble(ProTerritory::getValue).reversed());
 
+    // W5b (REINFORCE_AMPHIB_THREAT): the no-enemy-neighbors removal below shares the one-unit
+    // pass's blind spot -- it only sees threat that walks, so an owned coastal objective under
+    // seaborne threat is written off with CanHold=true on the books and never reinforced past
+    // DEFEND_AMPHIB_THREAT's single pinned unit. Exempt those territories from that one removal
+    // reason; every other removal reason and the allocator's own economics still apply.
+    final boolean reinforceAmphibThreat = proData.isPtvFeature(PtvFeature.REINFORCE_AMPHIB_THREAT);
+    final Predicate<Territory> amphibiouslyThreatenedOwned =
+        ProMatches.territoryIsValuableAndAmphibiouslyThreatened(data, player)
+            .and(Matches.isTerritoryOwnedBy(player));
+
     // Remove territories that I'm not going to try to defend
     for (final Iterator<ProTerritory> it = prioritizedTerritories.iterator(); it.hasNext(); ) {
       final ProTerritory patd = it.next();
@@ -687,7 +697,8 @@ class ProNonCombatMoveAi {
               && !hasFactory
               && !ProMatches.territoryHasNeighborOwnedByAndHasLandUnit(
                       data.getMap(), ProUtils.getPotentialEnemyPlayers(player))
-                  .test(t);
+                  .test(t)
+              && !(reinforceAmphibThreat && amphibiouslyThreatenedOwned.test(t));
       final boolean isNotFactoryAndOnlyAmphib =
           !t.isWater()
               && !hasFactory
