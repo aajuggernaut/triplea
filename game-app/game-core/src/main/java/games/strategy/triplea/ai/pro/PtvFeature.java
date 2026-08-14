@@ -18,12 +18,13 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Selected with {@code -Dtriplea.ai.ptv.features=NO_PARK_LOADED,GARRISON_CHINA}; the default
  * (property absent — i.e. GUI sparring games) is the <b>accepted stack</b>: the features that have
  * passed the two-tier measurement protocol, currently {@code NO_PARK_LOADED}, {@code
- * GARRISON_CHINA} and {@code NO_HIT_ATTACK_GUARD}. It was originally all-of-them, but that shipped
- * measured-harmful and unproven behaviours to every sparring game once the measurements existed (W3
- * measured −1.29 VC on 2026-08-10; W2 undetectable at ±2 VC). Scored evaluation runs always pass an
- * explicit list and are unaffected by the default. {@code none} disables the lot, which is useful
- * as a sanity check: a {@code ptv} bot with no features should be indistinguishable from stock, and
- * if it is not, something other than the features differs.
+ * GARRISON_CHINA}, {@code NO_HIT_ATTACK_GUARD} and {@code DEFEND_AMPHIB_THREAT}. It was originally
+ * all-of-them, but that shipped measured-harmful and unproven behaviours to every sparring game
+ * once the measurements existed (W3 measured −1.29 VC on 2026-08-10; W2 undetectable at ±2 VC).
+ * Scored evaluation runs always pass an explicit list and are unaffected by the default. {@code
+ * none} disables the lot, which is useful as a sanity check: a {@code ptv} bot with no features
+ * should be indistinguishable from stock, and if it is not, something other than the features
+ * differs.
  */
 @Slf4j
 public enum PtvFeature {
@@ -82,9 +83,17 @@ public enum PtvFeature {
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 
-  /** The features that have passed the two-tier measurement protocol. The GUI default. */
+  /**
+   * The features that have passed the two-tier measurement protocol. The GUI default.
+   *
+   * <p>DEFEND_AMPHIB_THREAT accepted 2026-08-13: Tier 1 passed (Scandinavia exposure 12→2,
+   * retention churn −23%), Tier 2 non-regression held on both sides (Axis marginal −0.61 VC [−1.63,
+   * +0.41], Allies +0.00 [−1.23, +1.23], n=28/16 paired). The stack checkpoint after that
+   * acceptance is the standing re-test of the whole stack's edge over stock; if it ever ablates a
+   * member, this set is where the removal lands.
+   */
   private static final Set<PtvFeature> ACCEPTED_STACK =
-      EnumSet.of(NO_PARK_LOADED, GARRISON_CHINA, NO_HIT_ATTACK_GUARD);
+      EnumSet.of(NO_PARK_LOADED, GARRISON_CHINA, NO_HIT_ATTACK_GUARD, DEFEND_AMPHIB_THREAT);
 
   // Declared before SELECTED: parse() reads it during class initialization, and a later
   // declaration is still null at that point -- which shipped as a crash on the default path,
