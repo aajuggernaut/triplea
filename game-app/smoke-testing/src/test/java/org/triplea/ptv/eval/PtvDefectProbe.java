@@ -338,6 +338,14 @@ public final class PtvDefectProbe {
    * W14 watch: Norway and Finland specifically -- the objective-bearing Scandinavian periphery.
    * German-held-but-empty is the exposure; ownership flipping away from Germans is the loss event
    * (the human record's game 15: "Allies held Norway for much of the game, Axis were out-incomed").
+   *
+   * <p>Counted per territory since the W5b post-mortem (2026-08-14): the two are different defect
+   * classes. Norway has no enemy land neighbour, so its losses belong to the coastal blind spot
+   * DEFEND_AMPHIB_THREAT addresses; Finland borders Russia, so its losses are ordinary land-front
+   * attrition the stock machinery already sees. The combined SCANDINAVIA_LOST count hid that
+   * split, and W5b was aimed -- and measured flat -- against the aggregate. Historical
+   * continuity: old SCANDINAVIA_LOST = SCANDINAVIA_LOST_NORWAY + SCANDINAVIA_LOST_FINLAND, same
+   * for _UNDEFENDED.
    */
   public static List<Occurrence> scandinaviaWatch(final GameData data, final int round) {
     final List<Occurrence> found = new ArrayList<>();
@@ -350,20 +358,24 @@ public final class PtvDefectProbe {
       if (t == null) {
         continue;
       }
+      final String suffix = name.toUpperCase(java.util.Locale.ROOT);
       if (t.getOwner().equals(germans)) {
         final boolean defended =
             t.getUnits().stream().anyMatch(ProMatches.unitIsAlliedLandAndNotInfra(germans));
         if (!defended) {
           found.add(
               new Occurrence(
-                  round, germans.getName(), "SCANDINAVIA_UNDEFENDED", name + " held but empty"));
+                  round,
+                  germans.getName(),
+                  "SCANDINAVIA_UNDEFENDED_" + suffix,
+                  name + " held but empty"));
         }
       } else if (data.getRelationshipTracker().isAtWar(germans, t.getOwner())) {
         found.add(
             new Occurrence(
                 round,
                 germans.getName(),
-                "SCANDINAVIA_LOST",
+                "SCANDINAVIA_LOST_" + suffix,
                 name + " held by " + t.getOwner().getName()));
       }
     }

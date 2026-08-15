@@ -120,7 +120,9 @@ public final class PtvDefectProbeRunner {
           final int total = byPlayer.values().stream().mapToInt(Integer::intValue).sum();
           log.info("{}: {} total  {}", defect, total, byPlayer);
         });
-    log.info("--- first 25 occurrences ---");
-    occurrences.stream().limit(25).forEach(o -> log.info("  {}", o));
+    // 250, not 25: the old cap hid every Scandinavia event past the early rounds, which is why
+    // the W5b post-mortem had to guess at the Norway/Finland split instead of reading it.
+    log.info("--- first 250 occurrences ---");
+    occurrences.stream().limit(250).forEach(o -> log.info("  {}", o));
   }
 }
