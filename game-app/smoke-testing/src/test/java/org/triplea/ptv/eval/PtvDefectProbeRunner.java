@@ -57,6 +57,7 @@ public final class PtvDefectProbeRunner {
 
     final List<PtvDefectProbe.Occurrence> occurrences = new ArrayList<>();
     final java.util.Set<String> capturedWatchlist = new java.util.HashSet<>();
+    final java.util.Set<String> conformanceReported = new java.util.HashSet<>();
     final Map<String, String> territoryOwners = new HashMap<>();
     final Map<String, Integer> captureRounds = new HashMap<>();
     Map<String, String> previousPositions = Map.of();
@@ -92,6 +93,7 @@ public final class PtvDefectProbeRunner {
             found.addAll(
                 PtvDefectProbe.retakenFast(territoryOwners, captureRounds, data, lastRound));
             found.addAll(PtvDefectProbe.scandinaviaWatch(data, lastRound));
+            found.addAll(PtvDefectProbe.openingConformance(data, lastRound, conformanceReported));
             previousPositions = positions;
             occurrences.addAll(found);
             log.info("round {} complete: {} defect occurrences", lastRound, found.size());
@@ -115,6 +117,11 @@ public final class PtvDefectProbeRunner {
     if (summary.isEmpty()) {
       log.info("no defects observed");
     }
+    // Stated explicitly because silence == conformance for the W26 anchors, and a silent
+    // conformance section is otherwise ambiguous with "the checks never ran" (the W15 lesson).
+    final long deviations =
+        occurrences.stream().filter(o -> o.defect().startsWith("OPEN_")).count();
+    log.info("opening conformance: {} deviation(s) across 11 anchors (W26)", deviations);
     summary.forEach(
         (defect, byPlayer) -> {
           final int total = byPlayer.values().stream().mapToInt(Integer::intValue).sum();

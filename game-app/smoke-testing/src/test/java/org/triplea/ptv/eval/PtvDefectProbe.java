@@ -5,6 +5,7 @@ import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.Territory;
 import games.strategy.engine.data.Unit;
 import games.strategy.triplea.ai.pro.util.ProMatches;
+import games.strategy.triplea.delegate.Matches;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -342,10 +343,9 @@ public final class PtvDefectProbe {
    * <p>Counted per territory since the W5b post-mortem (2026-08-14): the two are different defect
    * classes. Norway has no enemy land neighbour, so its losses belong to the coastal blind spot
    * DEFEND_AMPHIB_THREAT addresses; Finland borders Russia, so its losses are ordinary land-front
-   * attrition the stock machinery already sees. The combined SCANDINAVIA_LOST count hid that
-   * split, and W5b was aimed -- and measured flat -- against the aggregate. Historical
-   * continuity: old SCANDINAVIA_LOST = SCANDINAVIA_LOST_NORWAY + SCANDINAVIA_LOST_FINLAND, same
-   * for _UNDEFENDED.
+   * attrition the stock machinery already sees. The combined SCANDINAVIA_LOST count hid that split,
+   * and W5b was aimed -- and measured flat -- against the aggregate. Historical continuity: old
+   * SCANDINAVIA_LOST = SCANDINAVIA_LOST_NORWAY + SCANDINAVIA_LOST_FINLAND, same for _UNDEFENDED.
    */
   public static List<Occurrence> scandinaviaWatch(final GameData data, final int round) {
     final List<Occurrence> found = new ArrayList<>();
@@ -380,6 +380,177 @@ public final class PtvDefectProbe {
       }
     }
     return found;
+  }
+
+  /**
+   * W26 opening-conformance suite: the human corpus's near-universal lines as deadline-gated board
+   * checks. Silence is conformance; every emitted occurrence is a located deviation from a line
+   * 14-15 of 15 human games played, with the citation in the detail. Purchase-composition anchors
+   * (Russia 12-inf R1, US carrier-first, Italy 2 marines, Japan transports R1, UK_P Calcutta
+   * ground) need history parsing and are deferred to a v2.
+   *
+   * <p>{@code reported} keeps the two standing anchors (Sweden neutrality, kamikaze tokens) from
+   * re-firing every round; deadline anchors fire at exactly one round and need no state.
+   *
+   * <p>Caveat on the Baltic-strike anchor: an end-of-round-1 check cannot distinguish "Germany sank
+   * the 113/114 squadrons" from "Britain sailed them away first" -- but ships still sitting there
+   * at the end of round 1 mean Germany declined the strike AND Britain declined to reposition,
+   * which deviates from the book on either side of the board.
+   */
+  public static List<Occurrence> openingConformance(
+      final GameData data, final int round, final java.util.Set<String> reported) {
+    final List<Occurrence> found = new ArrayList<>();
+
+    if (round == 1) {
+      ownershipAnchor(found, data, round, "OPEN_FRANCE_G1", "France", "Germans", "human 15/15");
+      ownershipAnchor(
+          found, data, round, "OPEN_YUGOSLAVIA_G1", "Yugoslavia", "Germans", "human 15/15");
+      ownershipAnchor(found, data, round, "OPEN_FINLAND_G1", "Finland", "Germans", "human 15/15");
+
+      final Territory sz98 = data.getMap().getTerritoryOrNull("98 Sea Zone");
+      if (sz98 != null && sz98.anyUnitsMatch(u -> u.getOwner().getName().equals("Italians"))) {
+        found.add(
+            new Occurrence(
+                round,
+                "British",
+                "OPEN_CONVOY98_G1",
+                "Italian convoy survives in 98 SZ at end r1 [human: sunk by UK air 15/15]"));
+      }
+      final StringBuilder baltic = new StringBuilder();
+      for (final String zone : List.of("113 Sea Zone", "114 Sea Zone")) {
+        final Territory z = data.getMap().getTerritoryOrNull(zone);
+        if (z != null) {
+          final int ships =
+              z.getUnitCollection()
+                  .getMatches(u -> u.getOwner().getName().equals("British"))
+                  .size();
+          if (ships > 0) {
+            baltic.append(zone).append("=").append(ships).append("u ");
+          }
+        }
+      }
+      if (baltic.length() > 0) {
+        found.add(
+            new Occurrence(
+                round,
+                "Germans",
+                "OPEN_BALTIC_STRIKE_G1",
+                "British ships remain at end r1: "
+                    + baltic.toString().trim()
+                    + " [human: German air-naval strike 14/15]"));
+      }
+      final Territory scotland = data.getMap().getTerritoryOrNull("Scotland");
+      if (scotland != null
+          && scotland.anyUnitsMatch(
+              u ->
+                  u.getOwner().getName().equals("British")
+                      && Matches.unitIsLand().test(u)
+                      && !Matches.unitIsInfrastructure().test(u))) {
+        found.add(
+            new Occurrence(
+                round,
+                "British",
+                "OPEN_SCOTLAND_STRIP_G1",
+                "British ground still in Scotland at end r1 [human: stripped into United"
+                    + " Kingdom]"));
+      }
+    }
+
+    if (round == 2) {
+      ownershipAnchor(
+          found, data, round, "OPEN_DNG_ANZAC_R2", "Dutch New Guinea", "ANZAC", "human 15/15");
+    }
+
+    if (round == 3) {
+      final List<String> persia =
+          List.of("Northwest Persia", "Northeast Persia", "Southern Persia");
+      final boolean anyBritish =
+          persia.stream()
+              .map(n -> data.getMap().getTerritoryOrNull(n))
+              .anyMatch(t -> t != null && t.getOwner().getName().equals("British"));
+      if (!anyBritish) {
+        final String owners =
+            persia.stream()
+                .map(
+                    n -> {
+                      final Territory t = data.getMap().getTerritoryOrNull(n);
+                      return n + "=" + (t == null ? "?" : t.getOwner().getName());
+                    })
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("");
+        found.add(
+            new Occurrence(
+                round,
+                "British",
+                "OPEN_PERSIA_R3",
+                "no Persia territory British by end r3 (" + owners + ") [human: occupied]"));
+      }
+      ownershipAnchor(
+          found, data, round, "OPEN_IRAQ_R3", "Iraq", "British", "human: attacked 15/15");
+    }
+
+    final Territory sweden = data.getMap().getTerritoryOrNull("Sweden");
+    if (sweden != null && !reported.contains("OPEN_SWEDEN_NEUTRALITY")) {
+      final boolean entered =
+          !sweden.getOwner().getName().equals("Neutral_True")
+              || sweden.anyUnitsMatch(u -> !u.getOwner().getName().equals("Neutral_True"));
+      if (entered) {
+        reported.add("OPEN_SWEDEN_NEUTRALITY");
+        found.add(
+            new Occurrence(
+                round,
+                sweden.getOwner().getName(),
+                "OPEN_SWEDEN_NEUTRALITY",
+                "Sweden entered (owner "
+                    + sweden.getOwner().getName()
+                    + ") [human: never entered in 45 game-rounds]"));
+      }
+    }
+
+    final GamePlayer japanese = data.getPlayerList().getPlayerId("Japanese");
+    final games.strategy.engine.data.Resource tokens =
+        data.getResourceList().getResourceOptional("SuicideAttackTokens").orElse(null);
+    if (japanese != null && tokens != null && !reported.contains("OPEN_KAMIKAZE_UNSPENT")) {
+      final int held = japanese.getResources().getQuantity(tokens);
+      if (held < 6) {
+        reported.add("OPEN_KAMIKAZE_UNSPENT");
+        found.add(
+            new Occurrence(
+                round,
+                japanese.getName(),
+                "OPEN_KAMIKAZE_UNSPENT",
+                "kamikaze tokens spent (" + held + "/6 remain) [human: unspent 15/15]"));
+      }
+    }
+    return found;
+  }
+
+  private static void ownershipAnchor(
+      final List<Occurrence> found,
+      final GameData data,
+      final int round,
+      final String anchor,
+      final String territory,
+      final String expectedOwner,
+      final String citation) {
+    final Territory t = data.getMap().getTerritoryOrNull(territory);
+    if (t != null && !t.getOwner().getName().equals(expectedOwner)) {
+      found.add(
+          new Occurrence(
+              round,
+              expectedOwner,
+              anchor,
+              territory
+                  + " not "
+                  + expectedOwner
+                  + " by end r"
+                  + round
+                  + " (held by "
+                  + t.getOwner().getName()
+                  + ") ["
+                  + citation
+                  + "]"));
+    }
   }
 
   /** Every stateless check, run together. */
