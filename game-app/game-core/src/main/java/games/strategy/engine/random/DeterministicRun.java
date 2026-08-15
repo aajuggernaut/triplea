@@ -113,6 +113,18 @@ public final class DeterministicRun {
   private static final Object policyLock = new Object();
   private static SplittableRandom policyRandom = new SplittableRandom(0L);
 
+  // W22: the game-step-scoped policy stream, re-seeded from (baseSeed, round, step name) at the
+  // start of every step. Before this, turn-level policy draws (purchase randomization, politics,
+  // tech, AbstractAi choices) came from one global sequence for the whole game, so a candidate
+  // that made one extra purchase draw in round 2 re-phased every later draw of every player --
+  // which is why paired seeds measured no tighter than unpaired ones (SD of paired diffs 2.83 vs
+  // arm SD ~2, W2 shakedown). Step-keying contains a draw-count change to the step it happens
+  // in: the British round-5 politics draws are the same in both arms even when the German
+  // round-2 purchase count differs. Draws within one step remain a sequence (callers sample
+  // distributions repeatedly and must not get the same answer twice); the global stream below
+  // stays as the fallback for anything drawn outside a step.
+  private static SplittableRandom stepPolicyRandom = null;
+
   // A thread-confined policy stream, installed for the duration of one battle simulation.
   //
   // DummyPlayer extends AbstractAi, so a simulated battle makes AbstractAi's policy draws --
@@ -149,6 +161,23 @@ public final class DeterministicRun {
       scopedPolicyRandom.remove();
     } else {
       scopedPolicyRandom.set(previous);
+    }
+  }
+
+  /**
+   * Re-seeds the step-scoped policy stream at the start of a game step (W22). Keyed on the round
+   * and the step name -- which carries the player ({@code germansPurchase}) -- so the draws a step
+   * sees depend only on which step it is, never on how many draws earlier steps consumed. {@link
+   * String#hashCode} is specified by the JLS and stable across JVMs. Called by {@code ServerGame}
+   * on the game thread; no-op unless a deterministic run is active.
+   */
+  public static void beginStepPolicyScope(final int round, final String stepName) {
+    if (!enabled) {
+      return;
+    }
+    synchronized (policyLock) {
+      stepPolicyRandom =
+          new SplittableRandom(seedFor(mix64(round * 0x9E3779B97F4A7C15L + stepName.hashCode())));
     }
   }
 
@@ -192,6 +221,7 @@ public final class DeterministicRun {
     stoppedCalcQueries.set(0L);
     synchronized (policyLock) {
       policyRandom = new SplittableRandom(seed ^ 0x2545F4914F6CDD1DL);
+      stepPolicyRandom = null;
     }
     enabled = true;
   }
@@ -202,9 +232,11 @@ public final class DeterministicRun {
    *
    * <p>Unlike {@link #seedFor}, this is a <em>sequence</em>, not a context-keyed draw, because
    * these callers sample a distribution repeatedly within one turn and would otherwise get the same
-   * answer every time. The consequence is that it is position-dependent: a patch that changes how
-   * many purchase draws a player makes shifts every later draw in that game. Battle-simulation
-   * dice, which dominate the AI's randomness, are context-keyed and keep their pairing regardless.
+   * answer every time. Since W22 the sequence is scoped to the current game step (see {@link
+   * #beginStepPolicyScope}), so it is position-dependent only <em>within</em> a step: a patch that
+   * changes how many purchase draws a player makes no longer shifts any draw outside that step.
+   * Battle-simulation dice, which dominate the AI's randomness, are context-keyed per simulation
+   * and keep their pairing regardless.
    */
   public static double nextDouble() {
     if (!enabled) {
@@ -215,7 +247,7 @@ public final class DeterministicRun {
       return scoped.nextDouble();
     }
     synchronized (policyLock) {
-      return policyRandom.nextDouble();
+      return stepPolicyRandom != null ? stepPolicyRandom.nextDouble() : policyRandom.nextDouble();
     }
   }
 
@@ -229,7 +261,9 @@ public final class DeterministicRun {
       return scoped.nextInt(bound);
     }
     synchronized (policyLock) {
-      return policyRandom.nextInt(bound);
+      return stepPolicyRandom != null
+          ? stepPolicyRandom.nextInt(bound)
+          : policyRandom.nextInt(bound);
     }
   }
 
@@ -243,7 +277,8 @@ public final class DeterministicRun {
       return (float) scoped.nextDouble();
     }
     synchronized (policyLock) {
-      return (float) policyRandom.nextDouble();
+      return (float)
+          (stepPolicyRandom != null ? stepPolicyRandom.nextDouble() : policyRandom.nextDouble());
     }
   }
 
@@ -263,7 +298,8 @@ public final class DeterministicRun {
       shuffleSeed = scoped.nextLong();
     } else {
       synchronized (policyLock) {
-        shuffleSeed = policyRandom.nextLong();
+        shuffleSeed =
+            stepPolicyRandom != null ? stepPolicyRandom.nextLong() : policyRandom.nextLong();
       }
     }
     Collections.shuffle(list, new Random(shuffleSeed));
@@ -401,6 +437,9 @@ public final class DeterministicRun {
   /** Restores stock behaviour. Call between games so a leaked flag cannot affect normal play. */
   public static void disable() {
     enabled = false;
+    synchronized (policyLock) {
+      stepPolicyRandom = null;
+    }
   }
 
   public static boolean isEnabled() {

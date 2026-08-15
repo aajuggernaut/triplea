@@ -463,6 +463,11 @@ public class ServerGame extends AbstractGame {
     }
     final GameStep currentStep = gameData.getSequence().getStep();
     final IDelegate currentDelegate = currentStep.getDelegate();
+    // W22: under a deterministic evaluation run, re-key the AI's turn-level policy stream to
+    // (round, step) so a draw-count change inside one step cannot re-phase any other step's
+    // draws. No-op in normal play.
+    games.strategy.engine.random.DeterministicRun.beginStepPolicyScope(
+        gameData.getSequence().getRound(), currentStep.getName());
     if (!stepIsRestoredFromSavedGame && shouldAutoSaveBeforeStart(currentDelegate)) {
       autoSaveBefore(currentDelegate);
     }
