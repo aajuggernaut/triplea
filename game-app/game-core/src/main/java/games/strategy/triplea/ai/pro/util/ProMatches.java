@@ -361,6 +361,28 @@ public final class ProMatches {
   }
 
   /**
+   * PTV {@code CLAIM_CUSTODIAL_TERRITORIES} (W28): a land territory owned by a friendly power whose
+   * relationship lets this player take ownership by moving in -- the Dutch East Indies mechanic
+   * ({@code Custodianship}: allied archetype + {@code canTakeOverOwnedTerritory}). Allied ground is
+   * excluded from attack targeting by construction and its production counts for the owner, so
+   * without special handling the claim prices at zero and is never made -- while every human game
+   * claims the DEI by round 2. Keys off the engine's own relationship flag, not a territory list,
+   * so it covers whatever the map marks claimable.
+   */
+  public static Predicate<Territory> territoryIsClaimableCustodial(
+      final GameState data, final GamePlayer player) {
+    return t -> {
+      final GamePlayer owner = t.getOwner();
+      if (t.isWater() || owner.isNull() || owner.equals(player)) {
+        return false;
+      }
+      return data.getRelationshipTracker().isAllied(player, owner)
+          && Matches.relationshipTypeCanTakeOverOwnedTerritory()
+              .test(data.getRelationshipTracker().getRelationshipType(player, owner));
+    };
+  }
+
+  /**
    * PTV {@code DEFEND_AMPHIB_THREAT} (W5/W14): a land territory worth keeping -- production of at
    * least 2 or a victory city -- with sea units of a potential enemy within three water moves of
    * its coast (standard transport movement plus the unload step). This is the sailing counterpart

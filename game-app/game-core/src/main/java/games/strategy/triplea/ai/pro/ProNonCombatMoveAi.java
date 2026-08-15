@@ -166,6 +166,27 @@ class ProNonCombatMoveAi {
     final Map<Territory, Double> seaTerritoryValueMap =
         ProTerritoryValueUtils.findSeaTerritoryValues(
             player, territoriesThatCantBeHeld, territoryManager.getDefendTerritories());
+
+    if (proData.isPtvFeature(PtvFeature.CLAIM_CUSTODIAL_TERRITORIES)) {
+      // W28: custodial territories (allied archetype + canTakeOverOwnedTerritory -- the Dutch
+      // East Indies) are excluded from attack targeting by construction, and every non-combat
+      // valuation of them is ~zero: production counts for the owner, objective income is
+      // invisible. So the claim -- ownership by walking in, which every human game makes by
+      // round 2 -- is never generated, and ~8 PUs/turn of friendly income sits unclaimed until
+      // Japan arrives. Give unclaimed claimable territories their production plus a small
+      // premium here, and the existing machinery (land moves toward value, the transport
+      // load/unload chooser reading these values through the move map) carries a unit there.
+      // Production-scale numbers only; no objective modelling (W2's lesson).
+      final Predicate<Territory> claimable = ProMatches.territoryIsClaimableCustodial(data, player);
+      for (final Territory t : territoryManager.getDefendTerritories()) {
+        if (claimable.test(t)) {
+          final double claimValue = TerritoryAttachment.getProduction(t) + 2.0;
+          territoryValueMap.merge(t, claimValue, Math::max);
+          ProLogger.debug(t + " valued as claimable custodial territory: " + claimValue);
+        }
+      }
+    }
+
     Map<Territory, ProTerritory> moveMap = territoryManager.getDefendOptions().getTerritoryMap();
 
     // Use loop to ensure capital is protected after moves

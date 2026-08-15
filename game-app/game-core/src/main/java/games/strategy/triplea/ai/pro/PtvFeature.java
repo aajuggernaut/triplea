@@ -94,7 +94,29 @@ public enum PtvFeature {
    * redirects real force rather than pinning one cheap unit -- it must earn its place on its own
    * measurement.
    */
-  REINFORCE_AMPHIB_THREAT;
+  REINFORCE_AMPHIB_THREAT,
+
+  /**
+   * W28: claim custodial territories -- the Dutch East Indies walk-in every human game makes.
+   *
+   * <p>The Dutch relationship is {@code Custodianship}: allied archetype plus {@code
+   * canTakeOverOwnedTerritory}, so an Allied power takes ownership by moving land units in. Allied
+   * ground is excluded from attack targeting by construction, and every non-combat valuation of it
+   * is ~zero (production counts for the owner; objective income is invisible), so the claim is
+   * never generated: Java/Sumatra/Celebes/Dutch New Guinea sit unclaimed in every bot game (~8
+   * PUs/turn of friendly income plus the ANZAC objective and the 5-PU Japan-denial) until Japan
+   * arrives -- while humans claim the DEI by round 2, 15/15. This gives unclaimed claimable
+   * territories their production plus a small premium in the NCM territory-value map; the existing
+   * machinery (land moves toward value, the transport load/unload chooser) does the moving.
+   * Production-scale numbers only, no objective modelling -- W2's lesson.
+   *
+   * <p>Scope discovered while testing: {@code Friendly_Neutral} carries the same takeover flag, so
+   * the pro-side neutrals are claimable too -- Axis: Bulgaria/Finland/Iraq; Allies: the
+   * Neutral_Allies belt (Persia, Greece, Crete, ...). Stock already claims some of those as a side
+   * effect of defense value (Finland borders Russia); the DEI has no such pull, which is why it
+   * alone sat unclaimed. Sweden is Strict_Neutral and stays untouchable.
+   */
+  CLAIM_CUSTODIAL_TERRITORIES;
 
   public static final String SYSTEM_PROPERTY = "triplea.ai.ptv.features";
 

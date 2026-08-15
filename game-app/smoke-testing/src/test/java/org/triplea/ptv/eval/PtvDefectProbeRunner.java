@@ -94,6 +94,7 @@ public final class PtvDefectProbeRunner {
                 PtvDefectProbe.retakenFast(territoryOwners, captureRounds, data, lastRound));
             found.addAll(PtvDefectProbe.scandinaviaWatch(data, lastRound));
             found.addAll(PtvDefectProbe.openingConformance(data, lastRound, conformanceReported));
+            found.addAll(PtvDefectProbe.unclaimedCustodialTerritories(data, lastRound));
             previousPositions = positions;
             occurrences.addAll(found);
             log.info("round {} complete: {} defect occurrences", lastRound, found.size());

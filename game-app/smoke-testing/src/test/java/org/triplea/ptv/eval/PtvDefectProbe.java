@@ -553,6 +553,43 @@ public final class PtvDefectProbe {
     }
   }
 
+  /**
+   * W28 exposure: land territories some allied power could claim by walking in ({@code
+   * canTakeOverOwnedTerritory} on an allied relationship -- the Dutch East Indies mechanic) that
+   * end the round still unclaimed. Each is friendly income and objective leverage on the table; the
+   * human book claims the DEI by round 2, so the human baseline is near zero from round 2 on, while
+   * a bot that never claims scores one per territory per round.
+   */
+  public static List<Occurrence> unclaimedCustodialTerritories(
+      final GameData data, final int round) {
+    final List<Occurrence> found = new ArrayList<>();
+    for (final Territory t : data.getMap().getTerritories()) {
+      if (t.isWater() || t.getOwner().isNull()) {
+        continue;
+      }
+      final GamePlayer owner = t.getOwner();
+      for (final GamePlayer claimant : data.getPlayerList().getPlayers()) {
+        if (claimant.equals(owner) || claimant.isNull()) {
+          continue;
+        }
+        final boolean claimable =
+            data.getRelationshipTracker().isAllied(claimant, owner)
+                && Matches.relationshipTypeCanTakeOverOwnedTerritory()
+                    .test(data.getRelationshipTracker().getRelationshipType(claimant, owner));
+        if (claimable) {
+          found.add(
+              new Occurrence(
+                  round,
+                  owner.getName(),
+                  "CUSTODIAL_UNCLAIMED",
+                  t.getName() + " claimable (e.g. by " + claimant.getName() + ") but unclaimed"));
+          break;
+        }
+      }
+    }
+    return found;
+  }
+
   /** Every stateless check, run together. */
   public static List<Occurrence> all(final GameData data, final int round) {
     final List<Occurrence> found = new ArrayList<>();
