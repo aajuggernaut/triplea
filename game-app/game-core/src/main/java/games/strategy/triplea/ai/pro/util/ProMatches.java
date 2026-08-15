@@ -371,6 +371,13 @@ public final class ProMatches {
    */
   public static Predicate<Territory> territoryIsClaimableCustodial(
       final GameState data, final GamePlayer player) {
+    // Relationships are symmetric pairs, so without this guard the passive shell on the other
+    // end of a Friendly_Neutral pairing "claims" the active power's land right back --
+    // Neutral_Axis reading as a claimant of every German territory. A passive player takes no
+    // turns and can claim nothing.
+    if (ProUtils.isPassiveNeutralPlayer(player)) {
+      return t -> false;
+    }
     return t -> {
       final GamePlayer owner = t.getOwner();
       if (t.isWater() || owner.isNull() || owner.equals(player)) {

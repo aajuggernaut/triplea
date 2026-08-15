@@ -563,26 +563,31 @@ public final class PtvDefectProbe {
   public static List<Occurrence> unclaimedCustodialTerritories(
       final GameData data, final int round) {
     final List<Occurrence> found = new ArrayList<>();
+    // Reuses the feature's own predicate so the instrument and the fix can never drift. The
+    // predicate returns constant-false for passive claimants -- without that, the symmetric
+    // Friendly_Neutral pairings made Neutral_Axis a "claimant" of every German territory and
+    // the count degenerated to ~all owned land (caught by three seeds' totals tying exactly).
+    final List<Map.Entry<GamePlayer, java.util.function.Predicate<Territory>>> claimants =
+        data.getPlayerList().getPlayers().stream()
+            .map(
+                p ->
+                    Map.entry(
+                        p,
+                        (java.util.function.Predicate<Territory>)
+                            ProMatches.territoryIsClaimableCustodial(data, p)))
+            .toList();
     for (final Territory t : data.getMap().getTerritories()) {
-      if (t.isWater() || t.getOwner().isNull()) {
+      if (t.isWater()) {
         continue;
       }
-      final GamePlayer owner = t.getOwner();
-      for (final GamePlayer claimant : data.getPlayerList().getPlayers()) {
-        if (claimant.equals(owner) || claimant.isNull()) {
-          continue;
-        }
-        final boolean claimable =
-            data.getRelationshipTracker().isAllied(claimant, owner)
-                && Matches.relationshipTypeCanTakeOverOwnedTerritory()
-                    .test(data.getRelationshipTracker().getRelationshipType(claimant, owner));
-        if (claimable) {
+      for (final Map.Entry<GamePlayer, java.util.function.Predicate<Territory>> c : claimants) {
+        if (c.getValue().test(t)) {
           found.add(
               new Occurrence(
                   round,
-                  owner.getName(),
+                  t.getOwner().getName(),
                   "CUSTODIAL_UNCLAIMED",
-                  t.getName() + " claimable (e.g. by " + claimant.getName() + ") but unclaimed"));
+                  t.getName() + " claimable (e.g. by " + c.getKey().getName() + ") but unclaimed"));
           break;
         }
       }

@@ -103,7 +103,7 @@ class PtvCustodialClaimTest {
   }
 
   @Test
-  @DisplayName("the probe counts the unclaimed DEI on the start board")
+  @DisplayName("the probe counts the unclaimed DEI on the start board -- and only real claims")
   void probeCountsUnclaimedCustodialTerritories() {
     final List<PtvDefectProbe.Occurrence> found =
         PtvDefectProbe.unclaimedCustodialTerritories(data, 1);
@@ -112,5 +112,17 @@ class PtvCustodialClaimTest {
         found.stream().map(o -> o.detail().split(" claimable")[0]).toList(),
         hasItem("Dutch New Guinea"));
     assertThat(found.stream().allMatch(o -> o.defect().equals("CUSTODIAL_UNCLAIMED")), is(true));
+    // The first probe run degenerated to ~200 territories a round: symmetric Friendly_Neutral
+    // pairings let passive shells "claim" active powers' land (Neutral_Axis claiming every
+    // German territory). Real claims only come from active powers against custodial holders.
+    final List<String> owners =
+        found.stream().map(PtvDefectProbe.Occurrence::player).distinct().sorted().toList();
+    for (final String owner : owners) {
+      assertThat(
+          "unexpected claimable owner: " + owner,
+          List.of("Dutch", "Neutral_Allies", "Neutral_Axis").contains(owner),
+          is(true));
+    }
+    assertThat("sane start-board count: " + found.size(), found.size() <= 25, is(true));
   }
 }
