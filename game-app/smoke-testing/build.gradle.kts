@@ -54,6 +54,23 @@ tasks.register<JavaExec>("ptvEval") {
         ?: listOf("--games", "2", "--side", "axis", "--max-rounds", "20")
 }
 
+// Per-round, per-alliance economic series (income, production, TUV, victory cities) extracted
+// from saved games with full history. Feeds the human-corpus graphs in the analysis repo's
+// positions/ directory and provides anchor curves for opening-conformance comparisons.
+tasks.register<JavaExec>("ptvStatsDump") {
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    description = "Dumps per-round alliance income/production/TUV/VC CSVs from .tsvg saves"
+
+    dependsOn(tasks.named("testClasses"))
+    mainClass.set("org.triplea.ptv.eval.PtvStatsDump")
+    classpath = sourceSets["test"].runtimeClasspath
+    workingDir = projectDir
+    maxHeapSize = (project.findProperty("ptvStatsHeap") as String?) ?: "4G"
+    // Paths with spaces (the corpus save names) should be passed via --dir, not listed here.
+    args = (project.findProperty("ptvStatsArgs") as String?)?.split(" ")?.filter { it.isNotBlank() }
+        ?: listOf()
+}
+
 // Gather all URLs in the same game list file
 val downloadURLs = mutableListOf<String>()
 val saveGamesFile = project.layout.projectDirectory.file("save-game-list.txt").asFile
