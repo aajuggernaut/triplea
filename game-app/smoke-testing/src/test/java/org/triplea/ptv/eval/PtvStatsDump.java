@@ -10,6 +10,7 @@ import games.strategy.engine.framework.GameDataManager;
 import games.strategy.engine.history.HistoryNode;
 import games.strategy.engine.history.Round;
 import games.strategy.engine.history.Step;
+import games.strategy.triplea.Properties;
 import games.strategy.triplea.attachments.TerritoryAttachment;
 import games.strategy.triplea.util.TuvCostsCalculator;
 import java.io.IOException;
@@ -68,11 +69,26 @@ public final class PtvStatsDump {
   private static final Pattern CAPTURED = Pattern.compile("captures? (\\d+) ?PUs? while taking");
 
   /**
+   * Handicap income from the per-player "Income Percentage" / "PU Income Bonus" game options
+   * (BonusIncomeUtils). The message carries the TOTAL bonus after "income for" when a percentage is
+   * set, else only the flat amount: "Giving Germans 105% income for 4 PUs; end with ...", "Giving
+   * Germans 3 PUs & 105% income for 7 PUs; ...", "Giving Germans 3 PUs PUs; ...".
+   */
+  private static final Pattern BONUS_PERCENT =
+      Pattern.compile("^Giving \\S+ .*?income for (-?\\d+) (?:Optional\\[)?PUs?");
+
+  private static final Pattern BONUS_FLAT =
+      Pattern.compile("^Giving \\S+ (-?\\d+) (?:Optional\\[)?PUs?\\b");
+
+  /**
    * PU-bearing lines that are known not to be income, kept out of the audit noise. Manual edit-mode
-   * cash adjustments are consciously excluded from income (two exist in the corpus, +10 and +1).
+   * cash adjustments are consciously excluded from income (two exist in the corpus, +10 and +1), as
+   * are treasuries destroyed rather than captured when a capital falls (the destroysPUs rule).
    */
   private static final Pattern KNOWN_NOT_INCOME =
-      Pattern.compile("Remaining resources|Turning on Edit Mode|EDIT: Changing PUs");
+      Pattern.compile(
+          "Remaining resources|Turning on Edit Mode|EDIT: Changing PUs"
+              + "|destroys \\d+ ?PUs? while taking");
 
   private PtvStatsDump() {}
 
@@ -118,6 +134,19 @@ public final class PtvStatsDump {
           "Expected alliances named Axis and Allies; found " + data.getAllianceTracker());
     }
 
+    final List<String> handicaps = new ArrayList<>();
+    for (final GamePlayer p : data.getPlayerList().getPlayers()) {
+      final int pct = Properties.getIncomePercentage(p, data.getProperties());
+      final int flat = Properties.getPuIncomeBonus(p, data.getProperties());
+      if (pct != 100 || flat != 0) {
+        handicaps.add(p.getName() + " " + pct + "%" + (flat != 0 ? " +" + flat + " PU" : ""));
+      }
+    }
+    log.info(
+        "{} handicap settings: {}",
+        baseName(save),
+        handicaps.isEmpty() ? "none" : String.join(", ", handicaps));
+
     final Map<Integer, int[]> incomeByRound = parseIncome(data, axis, allies);
 
     final List<Round> rounds = new ArrayList<>();
@@ -132,21 +161,33 @@ public final class PtvStatsDump {
     final StringBuilder csv = new StringBuilder();
     csv.append(
         "game,round,axis_income,allies_income,axis_captured,allies_captured,"
+            + "axis_bonus,allies_bonus,income_complete,"
             + "axis_prod,allies_prod,axis_tuv,allies_tuv,axis_vc,allies_vc\n");
     final String game = baseName(save);
-    for (final Round round : rounds) {
+    for (int i = 0; i < rounds.size(); i++) {
+      final Round round = rounds.get(i);
       data.getHistory().gotoNode(round);
       final Material m = Material.of(data, axis, allies);
-      final int[] income = incomeByRound.getOrDefault(round.getRoundNo(), new int[4]);
+      final int[] income = incomeByRound.getOrDefault(round.getRoundNo(), new int[7]);
+      // Games end by concession, usually partway through a round. Only the final round can be
+      // short; it counts as complete when as many nations collected in it as in the round before.
+      final boolean incomeComplete =
+          i < rounds.size() - 1
+              || i == 0
+              || income[6]
+                  >= incomeByRound.getOrDefault(rounds.get(i - 1).getRoundNo(), new int[7])[6];
       csv.append(
           String.format(
-              "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d%n",
+              "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d%n",
               game,
               round.getRoundNo(),
               income[0],
               income[1],
               income[2],
               income[3],
+              income[4],
+              income[5],
+              incomeComplete ? 1 : 0,
               m.axisProd,
               m.alliesProd,
               m.axisTuv,
@@ -158,7 +199,7 @@ public final class PtvStatsDump {
     final Material end = Material.of(data, axis, allies);
     csv.append(
         String.format(
-            "%s,end,,,,,%d,%d,%d,%d,%d,%d%n",
+            "%s,end,,,,,,,,%d,%d,%d,%d,%d,%d%n",
             game,
             end.axisProd,
             end.alliesProd,
@@ -183,9 +224,10 @@ public final class PtvStatsDump {
   }
 
   /**
-   * Sums collect + national-objective PUs (slots 0/1) and captured-capital plunder (slots 2/3) per
-   * round per alliance from history node titles. Collect and objective lines are Events; plunder
-   * lines are EventChild detail lines, so every non-structural node's title is scanned.
+   * Sums collect + national-objective + handicap-bonus PUs (slots 0/1), captured-capital plunder
+   * (slots 2/3), and the handicap bonus alone (slots 4/5, already included in 0/1) per round per
+   * alliance from history node titles. Collect and objective lines are Events; plunder lines are
+   * EventChild detail lines, so every non-structural node's title is scanned.
    */
   private static Map<Integer, int[]> parseIncome(
       final GameData data, final Set<GamePlayer> axis, final Set<GamePlayer> allies) {
@@ -213,11 +255,16 @@ public final class PtvStatsDump {
       }
       int slot = -1;
       int amount = 0;
+      boolean bonus = false;
+      boolean isCollect = false;
       final Matcher collect = COLLECT.matcher(title);
       final Matcher objective = OBJECTIVE.matcher(title);
       final Matcher captured = CAPTURED.matcher(title);
+      final Matcher bonusPercent = BONUS_PERCENT.matcher(title);
+      final Matcher bonusFlat = BONUS_FLAT.matcher(title);
       if (collect.find()) {
         slot = 0;
+        isCollect = true;
         amount = Integer.parseInt(collect.group(1));
       } else if (objective.find()) {
         slot = 0;
@@ -225,6 +272,14 @@ public final class PtvStatsDump {
       } else if (captured.find()) {
         slot = 2;
         amount = Integer.parseInt(captured.group(1));
+      } else if (bonusPercent.find()) {
+        slot = 0;
+        bonus = true;
+        amount = Integer.parseInt(bonusPercent.group(1));
+      } else if (bonusFlat.find()) {
+        slot = 0;
+        bonus = true;
+        amount = Integer.parseInt(bonusFlat.group(1));
       }
       if (slot < 0) {
         if (!KNOWN_NOT_INCOME.matcher(title).find()) {
@@ -232,15 +287,29 @@ public final class PtvStatsDump {
         }
         continue;
       }
-      if (amount == 0) {
+      if (amount == 0 && !isCollect) {
         continue;
       }
-      final int side = axis.contains(stepPlayer) ? 0 : allies.contains(stepPlayer) ? 1 : -1;
+      // A handicap applies to the starting treasury in a playerless pre-game step, so bonus
+      // lines are attributed to the nation they name rather than to the step's player.
+      final GamePlayer payee =
+          bonus
+              ? Optional.ofNullable(data.getPlayerList().getPlayerId(title.split(" ")[1]))
+                  .orElse(stepPlayer)
+              : stepPlayer;
+      final int side = axis.contains(payee) ? 0 : allies.contains(payee) ? 1 : -1;
       if (side < 0) {
         audit.add("r" + round + " UNATTRIBUTED [" + name(stepPlayer) + "] " + title);
         continue;
       }
-      incomeByRound.computeIfAbsent(round, k -> new int[4])[slot + side] += amount;
+      final int[] totals = incomeByRound.computeIfAbsent(round, k -> new int[7]);
+      totals[slot + side] += amount;
+      if (isCollect) {
+        totals[6]++;
+      }
+      if (bonus) {
+        totals[4 + side] += amount;
+      }
     }
     // The audit list holds every PU-bearing line that was neither counted nor known-safe.
     // Empty is the expected state; anything here needs a human eye before the numbers are used.
