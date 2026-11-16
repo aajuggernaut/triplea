@@ -38,6 +38,11 @@ public final class LlmDecisionLog {
     gameTag = tag.replaceAll("[^A-Za-z0-9._-]", "_");
   }
 
+  /** The current game's tag; also identifies the game in requests to the agent. */
+  static String gameTag() {
+    return gameTag;
+  }
+
   static boolean enabled() {
     return logDir() != null;
   }

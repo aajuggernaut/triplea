@@ -12,17 +12,23 @@ import lombok.extern.slf4j.Slf4j;
 import org.triplea.java.collections.IntegerMap;
 
 /**
- * The bridge between TripleA and an external LLM game agent. Milestone 2 ("logging bridge"): it
- * plays exactly like stock ProAi and, at each strategic decision, records the briefing an LLM would
- * be shown together with what ProAi actually chose. That proves the hook, shows real briefing
- * sizes, and builds a corpus of (situation, ProAi answer) pairs before any model is involved.
+ * The bridge between TripleA and an external LLM game agent. Plays as stock ProAi except where the
+ * agent is asked to decide; contract and design in {@code docs/purchase-agent-spec.md} of the
+ * triplea-llm-agent repo.
  *
- * <p>Logging is off unless {@value LlmDecisionLog#LOG_DIR_PROPERTY} is set. Nothing here may change
- * a decision: the briefing is built from the live game data before ProAi acts, read-only, and any
- * failure in it is logged and ignored so the game never stalls on the bridge.
+ * <p>Three modes, chosen per purchase from system properties:
  *
- * <p>Only purchases are covered so far. The next step replaces ProAi's purchase with the agent's
- * answer, falling back to ProAi's on timeout, error, or an illegal answer.
+ * <ul>
+ *   <li><b>Agent</b> ({@value LlmAgentConfig#AGENT_URL} set and this seat in {@value
+ *       LlmAgentConfig#SEATS}, or that list empty): ProAi plans as usual, then {@link
+ *       LlmPurchaseInterceptor} asks the agent at the moment ProAi commits its buy and commits the
+ *       agent's answer if the engine accepts it, ProAi's buy otherwise.
+ *   <li><b>Logging</b> (no agent for this seat, {@value LlmDecisionLog#LOG_DIR_PROPERTY} set):
+ *       plays exactly as ProAi and records the briefing plus ProAi's actual buy.
+ *   <li><b>Plain</b> (neither): stock ProAi.
+ * </ul>
+ *
+ * <p>The game must never stall on the bridge: every failure falls back to ProAi's own decision.
  */
 @Slf4j
 public class LlmBridgeAi extends ProAi {
@@ -38,7 +44,29 @@ public class LlmBridgeAi extends ProAi {
       final IPurchaseDelegate purchaseDelegate,
       final GameData data,
       final GamePlayer player) {
-    if (purchaseForBid || pusToSpend <= 0 || !LlmDecisionLog.enabled()) {
+    if (purchaseForBid || pusToSpend <= 0) {
+      super.purchase(purchaseForBid, pusToSpend, purchaseDelegate, data, player);
+      return;
+    }
+    final LlmAgentConfig config = LlmAgentConfig.fromSystemProperties();
+    if (config.decidesFor(player)) {
+      final Resource pus = data.getResourceList().getResourceOrThrow(Constants.PUS);
+      final LlmPurchaseInterceptor interceptor =
+          new LlmPurchaseInterceptor(
+              purchaseDelegate,
+              player,
+              data.getSequence().getRound(),
+              config.maxAttempts(),
+              LlmAgentClient.transport(config.agentUrl(), config.timeout()),
+              // Built when ProAi commits, from the real game data (its own simulation ran on a
+              // copy); repairs have been paid by then, so the bank is what is left to spend.
+              () ->
+                  LlmBriefingBuilder.purchase(data, player, player.getResources().getQuantity(pus)),
+              LlmDecisionLog.gameTag());
+      super.purchase(purchaseForBid, pusToSpend, interceptor.proxy(), data, player);
+      return;
+    }
+    if (!LlmDecisionLog.enabled()) {
       super.purchase(purchaseForBid, pusToSpend, purchaseDelegate, data, player);
       return;
     }
