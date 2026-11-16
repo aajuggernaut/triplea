@@ -7,6 +7,7 @@ import games.strategy.engine.data.Territory;
 import games.strategy.engine.framework.ServerGame;
 import games.strategy.engine.framework.startup.ui.PlayerTypes;
 import games.strategy.engine.random.DeterministicRun;
+import games.strategy.triplea.ai.llm.LlmDecisionLog;
 import games.strategy.triplea.ai.pro.ProAi;
 import games.strategy.triplea.ai.pro.PtvFeature;
 import games.strategy.triplea.ai.pro.logging.PtvTrace;
@@ -81,7 +82,16 @@ import org.triplea.java.collections.CollectionUtils;
 @Slf4j
 public final class PtvEvalRunner {
 
-  private static final String PTV_XML = "ww2_path_to_victory.xml";
+  /**
+   * The map played when {@code --xml} is not given. Other maps (e.g. {@code
+   * ww2global40_2nd_edition.xml} for the LLM-bridge work) must live in {@code
+   * src/test/resources/map-xmls} and use the alliance names {@value #AXIS} and {@value #ALLIES}.
+   */
+  private static final String DEFAULT_XML = "ww2_path_to_victory.xml";
+
+  /** The provenance string PTV runs have always carried; compare.py matches it verbatim. */
+  private static final String PTV_MAP_LABEL = "WW2 Path to Victory v6.4 (commit 45354ca)";
+
   private static final String AXIS = "Axis";
   private static final String ALLIES = "Allies";
 
@@ -164,7 +174,7 @@ public final class PtvEvalRunner {
       // and reality have already diverged once (a "single-feature" run whose header could not
       // prove it was not the whole stack).
       csv.println("# ptv-eval run " + Instant.now());
-      csv.println("# map=WW2 Path to Victory v6.4 (commit 45354ca)");
+      csv.println("# map=" + mapLabel(options.xml));
       csv.println("# engine=" + engineBuildId());
       csv.println("# candidate=" + options.candidate + " baseline=" + options.baseline);
       csv.println("# side=" + options.side);
@@ -256,6 +266,29 @@ public final class PtvEvalRunner {
   }
 
   /**
+   * The map's identity for the CSV header, read from the XML's {@code <info>} element rather than
+   * echoed from the command line. PTV keeps its historical label so old and new PTV runs still
+   * compare; any other map reports {@code name vversion (file)}.
+   */
+  private static String mapLabel(final String xml) {
+    if (xml.equals(DEFAULT_XML)) {
+      return PTV_MAP_LABEL;
+    }
+    final Path path = Path.of("src", "test", "resources", "map-xmls", xml);
+    try {
+      final String text = Files.readString(path, StandardCharsets.UTF_8);
+      final var matcher =
+          java.util.regex.Pattern.compile("<info\\s+name=\"([^\"]*)\"\\s+version=\"([^\"]*)\"")
+              .matcher(text);
+      return matcher.find()
+          ? matcher.group(1) + " v" + matcher.group(2) + " (" + xml + ")"
+          : "unknown (" + xml + ")";
+    } catch (final IOException e) {
+      return "unreadable (" + xml + ")";
+    }
+  }
+
+  /**
    * The fork commit this runner was built from, with a {@code -dirty} suffix when the working tree
    * has uncommitted changes -- which during patch development is the norm, and exactly when knowing
    * "which code was this" matters most. Falls back to {@code unknown} outside a git checkout.
@@ -320,6 +353,8 @@ public final class PtvEvalRunner {
       if (deterministic) {
         DeterministicRun.enable(seed);
       }
+      // Names this game's LLM-bridge decision log; inert unless triplea.ai.llm.logDir is set.
+      LlmDecisionLog.setGameTag("seed" + seed + "-" + candidateSide);
       if (options.traceDir != null) {
         try {
           PtvTrace.begin(
@@ -331,7 +366,7 @@ public final class PtvEvalRunner {
       }
       game =
           GameTestUtils.setUpGameWithAis(
-              PTV_XML, data -> assignTypes(data, candidateSide, candidate, baseline));
+              options.xml, data -> assignTypes(data, candidateSide, candidate, baseline));
       game.setRandomSource(new SeededRandomSource(seed));
       game.setStopGameOnDelegateExecutionStop(true);
 
@@ -670,9 +705,10 @@ public final class PtvEvalRunner {
       case "fast" -> PlayerTypes.FAST_AI;
       case "weak" -> PlayerTypes.WEAK_AI;
       case "ptv" -> PlayerTypes.PTV_AI;
+      case "llm" -> PlayerTypes.LLM_BRIDGE_AI;
       default ->
           throw new IllegalArgumentException(
-              "Unknown bot '" + name + "' (expected pro|fast|weak|ptv)");
+              "Unknown bot '" + name + "' (expected pro|fast|weak|ptv|llm)");
     };
   }
 
@@ -812,6 +848,8 @@ public final class PtvEvalRunner {
     private Path snapshotDir = null;
     // W23: per-game unfiltered decision-trace files. Off in scored runs.
     private Path traceDir = null;
+    // Map XML under src/test/resources/map-xmls. Defaults to PTV.
+    private String xml = DEFAULT_XML;
 
     static Options parse(final String[] args) {
       final Options o = new Options();
@@ -842,6 +880,7 @@ public final class PtvEvalRunner {
           case "--snapshot-dir" -> o.snapshotDir = Path.of(value);
           case "--trace-dir" -> o.traceDir = Path.of(value);
           case "--out" -> o.out = Path.of(value);
+          case "--xml" -> o.xml = value;
           default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
         }
       }

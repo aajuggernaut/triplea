@@ -260,9 +260,10 @@ public final class PtvPositionHarness {
       return switch (playerTypeName.toLowerCase(Locale.ROOT)) {
         case "pro" -> PlayerTypes.PRO_AI;
         case "ptv" -> PlayerTypes.PTV_AI;
+        case "llm" -> PlayerTypes.LLM_BRIDGE_AI;
         default ->
             throw new IllegalArgumentException(
-                "Unknown player type '" + playerTypeName + "' (expected pro|ptv)");
+                "Unknown player type '" + playerTypeName + "' (expected pro|ptv|llm)");
       };
     }
 

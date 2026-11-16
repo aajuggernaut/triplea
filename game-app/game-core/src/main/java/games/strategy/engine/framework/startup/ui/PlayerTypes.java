@@ -3,6 +3,7 @@ package games.strategy.engine.framework.startup.ui;
 import games.strategy.engine.framework.I18nEngineFramework;
 import games.strategy.engine.player.Player;
 import games.strategy.triplea.ai.fast.FastAi;
+import games.strategy.triplea.ai.llm.LlmBridgeAi;
 import games.strategy.triplea.ai.pro.ProAi;
 import games.strategy.triplea.ai.pro.PtvProAi;
 import games.strategy.triplea.ai.weak.WeakAi;
@@ -52,6 +53,18 @@ public class PlayerTypes {
         }
       };
 
+  /**
+   * Stock ProAi wired to an external LLM game agent. Until the agent is connected it plays exactly
+   * as ProAi and only logs the briefing it would send. See {@link LlmBridgeAi}.
+   */
+  public static final Type LLM_BRIDGE_AI =
+      new Type("LLM Bridge (AI)") {
+        @Override
+        public Player newPlayerWithName(final String name) {
+          return new LlmBridgeAi(name, getLabel());
+        }
+      };
+
   public static final String PLAYER_TYPE_DEFAULT_LABEL =
       I18nEngineFramework.get().getText("startup.PlayerTypes.PLAYER_TYPE_DEFAULT_LABEL");
   public static final String PLAYER_TYPE_HUMAN_LABEL =
@@ -65,7 +78,11 @@ public class PlayerTypes {
 
   public static Collection<Type> getBuiltInPlayerTypes() {
     return List.of(
-        PlayerTypes.WEAK_AI, PlayerTypes.FAST_AI, PlayerTypes.PRO_AI, PlayerTypes.PTV_AI);
+        PlayerTypes.WEAK_AI,
+        PlayerTypes.FAST_AI,
+        PlayerTypes.PRO_AI,
+        PlayerTypes.PTV_AI,
+        PlayerTypes.LLM_BRIDGE_AI);
   }
 
   /**
