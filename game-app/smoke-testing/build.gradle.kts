@@ -104,5 +104,9 @@ tasks.named<ProcessResources>("processTestResources") {
 // one Gradle daemon per shard, which on a 32 GB machine is the difference between 4 shards and 2.
 tasks.register("ptvEvalClasspath") {
     val cp = sourceSets["test"].runtimeClasspath
+    // Builds every jar and class dir on the path first. Without this a fresh clone printed paths
+    // to jars that had never been built (e.g. game-headless's), and the first eval launch failed
+    // with NoClassDefFoundError; older checkouts silently ran whatever stale jars they had.
+    dependsOn(cp)
     doLast { println(cp.asPath) }
 }
