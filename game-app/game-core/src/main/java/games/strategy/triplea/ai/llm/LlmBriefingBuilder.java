@@ -1,6 +1,7 @@
 package games.strategy.triplea.ai.llm;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GameMap;
@@ -45,7 +46,12 @@ import org.triplea.java.collections.IntegerMap;
  * <p>v0 covers the purchase decision only.
  */
 final class LlmBriefingBuilder {
-  static final String SCHEMA = "llm-briefing/v0";
+  /**
+   * v0.1 (2026-11-16): adds the {@code budget} block and orders placement rows largest first, after
+   * the model misread its bank and fixated on a 3-unit factory under v0 (STATUS.md, anchoring
+   * review). Every v0 field is unchanged, so v0 consumers keep working.
+   */
+  static final String SCHEMA = "llm-briefing/v0.1";
 
   /** Enemy land units within this many land steps count as able to reach a territory. */
   private static final int LAND_REACH = 2;
@@ -72,6 +78,8 @@ final class LlmBriefingBuilder {
     b.addProperty("player", player.getName());
     b.add("alliances", strings(data.getAllianceTracker().getAlliancesPlayerIsIn(player)));
     b.addProperty("pus", pusToSpend);
+    final JsonArray placement = placement(ctx);
+    b.add("budget", budget(data, pusToSpend, placement));
     b.add("atWarWith", strings(ctx.enemies.stream().map(GamePlayer::getName).toList()));
     b.add("powers", powers(ctx));
     b.add("buildable", buildable(ctx));
@@ -79,7 +87,7 @@ final class LlmBriefingBuilder {
     if (!waiting.isEmpty()) {
       b.add("alreadyWaitingToPlace", counts(waiting));
     }
-    b.add("placement", placement(ctx));
+    b.add("placement", placement);
     b.add("landFronts", landFronts(ctx));
     b.add("seaZonesNearFactories", seaZones(ctx));
     b.add("targets", targets(ctx));
@@ -198,9 +206,33 @@ final class LlmBriefingBuilder {
     return arr;
   }
 
-  /** Where purchased units can be placed, and how many per territory. */
+  /**
+   * The two numbers a purchase is bounded by, side by side at the top: the whole bank, and the
+   * whole placement capacity across every factory. Under v0 the model read a single 3-unit
+   * factory's {@code maxUnits} as its limit and quoted budgets that were not in the briefing.
+   */
+  private static JsonObject budget(
+      final GameData data, final int pusToSpend, final JsonArray placement) {
+    long capacity = 0;
+    for (final JsonElement row : placement) {
+      capacity += row.getAsJsonObject().get("maxUnits").getAsLong();
+    }
+    final JsonObject o = new JsonObject();
+    o.addProperty("pusAvailable", pusToSpend);
+    o.addProperty("totalPlacementCapacity", capacity);
+    o.addProperty("placementTerritories", placement.size());
+    o.addProperty(
+        "unplacedUnitsCarryOver", data.getProperties().get(Constants.UNPLACED_UNITS_LIVE, false));
+    return o;
+  }
+
+  /**
+   * Where purchased units can be placed and how many per territory, largest capacity first (then by
+   * name, for byte-stable output). {@code maxUnits} is per territory; the total is in {@code
+   * budget}.
+   */
   private static JsonArray placement(final Context ctx) {
-    final JsonArray arr = new JsonArray();
+    final List<JsonObject> rows = new ArrayList<>();
     final Predicate<Territory> factory =
         ProMatches.territoryHasFactoryAndIsNotConqueredOwnedLand(ctx.player);
     for (final Territory t : ctx.map.getTerritories()) {
@@ -220,8 +252,14 @@ final class LlmBriefingBuilder {
       if (!seaZones.isEmpty()) {
         o.add("shipsGoTo", strings(seaZones));
       }
-      arr.add(o);
+      rows.add(o);
     }
+    rows.sort(
+        Comparator.comparingInt((JsonObject o) -> o.get("maxUnits").getAsInt())
+            .reversed()
+            .thenComparing(o -> o.get("territory").getAsString()));
+    final JsonArray arr = new JsonArray();
+    rows.forEach(arr::add);
     return arr;
   }
 
