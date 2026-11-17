@@ -21,7 +21,7 @@ class LlmBriefingBuilderTest {
   void budgetStatesTheBankAndTheTotalCapacityAcrossAllFactories() {
     final JsonObject briefing = LlmBriefingBuilder.purchase(data, germans, 30);
 
-    assertThat(briefing.get("schema").getAsString(), is("llm-briefing/v0.1"));
+    assertThat(briefing.get("schema").getAsString(), is("llm-briefing/v0.2"));
     final JsonObject budget = briefing.getAsJsonObject("budget");
     assertThat(budget.get("pusAvailable").getAsInt(), is(30));
     final JsonArray placement = briefing.getAsJsonArray("placement");
@@ -31,7 +31,8 @@ class LlmBriefingBuilderTest {
       total += row.getAsJsonObject().get("maxUnits").getAsInt();
     }
     assertThat(budget.get("totalPlacementCapacity").getAsInt(), is(total));
-    assertThat(budget.get("placementTerritories").getAsInt(), is(placement.size()));
+    // v0.2: a count of factories here was read as a unit limit.
+    assertThat(budget.has("placementTerritories"), is(false));
     // v0 consumers (the Python agent's validation) still read these.
     assertThat(briefing.get("pus").getAsInt(), is(30));
   }

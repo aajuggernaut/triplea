@@ -13,7 +13,7 @@ companion repo **`aajuggernaut/triplea-llm-agent`** (cloned next to this one as
 | `LlmPurchaseInterceptor` | Proxy over `IPurchaseDelegate`: at ProAi's commit, asks the agent, retries with the engine's error, falls back to ProAi's buy. |
 | `LlmAgentClient` | HTTP POST to `<agentUrl>/v1/purchase` (JDK `HttpClient`); never throws, returns a `Reply`. |
 | `LlmAgentConfig` | System properties: `triplea.ai.llm.agentUrl`, `.seats`, `.timeoutSeconds`, `.maxAttempts`. |
-| `LlmBriefingBuilder` | Map-generic JSON briefing (schema `llm-briefing/v0.1`: v0 plus a `budget` block and largest-first placement). No map, nation or unit names in code. |
+| `LlmBriefingBuilder` | Map-generic JSON briefing (schema `llm-briefing/v0.2`: v0 plus a `budget` block and largest-first placement; v0.2 dropped `budget.placementTerritories`). No map, nation or unit names in code. |
 | `LlmDecisionLog` | JSONL decision log; on only with `-Dtriplea.ai.llm.logDir=DIR`. |
 
 Tests: `game-core/src/test/java/games/strategy/triplea/ai/llm/` (unit), and

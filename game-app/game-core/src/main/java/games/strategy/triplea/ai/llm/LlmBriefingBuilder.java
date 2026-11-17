@@ -50,8 +50,12 @@ final class LlmBriefingBuilder {
    * v0.1 (2026-11-16): adds the {@code budget} block and orders placement rows largest first, after
    * the model misread its bank and fixated on a 3-unit factory under v0 (STATUS.md, anchoring
    * review). Every v0 field is unchanged, so v0 consumers keep working.
+   *
+   * <p>v0.2 (2026-11-16): drops {@code budget.placementTerritories}. The model read that count of
+   * factories as a unit limit ("5-unit placement limit" with 29 slots; one fighter on 98 PUs for
+   * "the single placement slot"), STATUS.md, v0.1 rerun.
    */
-  static final String SCHEMA = "llm-briefing/v0.1";
+  static final String SCHEMA = "llm-briefing/v0.2";
 
   /** Enemy land units within this many land steps count as able to reach a territory. */
   private static final int LAND_REACH = 2;
@@ -220,7 +224,6 @@ final class LlmBriefingBuilder {
     final JsonObject o = new JsonObject();
     o.addProperty("pusAvailable", pusToSpend);
     o.addProperty("totalPlacementCapacity", capacity);
-    o.addProperty("placementTerritories", placement.size());
     o.addProperty(
         "unplacedUnitsCarryOver", data.getProperties().get(Constants.UNPLACED_UNITS_LIVE, false));
     return o;
