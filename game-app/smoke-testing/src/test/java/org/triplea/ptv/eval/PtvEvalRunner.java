@@ -196,6 +196,7 @@ public final class PtvEvalRunner {
       csv.println("# checkpoints=" + checkpointRounds);
       csv.println("# primaryMetricRound=" + PRIMARY_METRIC_ROUND);
       csv.println("# deterministic=" + options.deterministic);
+      csv.println("# rng=" + options.rng);
       csv.println(GameOutcome.csvHeader());
       csv.flush();
 
@@ -351,6 +352,7 @@ public final class PtvEvalRunner {
       // Must be enabled before the map is parsed: unit ids are drawn from the seeded sequence, and
       // the starting units are created during parsing.
       if (deterministic) {
+        DeterministicRun.setStepKeyedUnitIds(options.rng.equals("keyed"));
         DeterministicRun.enable(seed);
       }
       // Names this game's LLM-bridge decision log; inert unless triplea.ai.llm.logDir is set.
@@ -367,7 +369,16 @@ public final class PtvEvalRunner {
       game =
           GameTestUtils.setUpGameWithAis(
               options.xml, data -> assignTypes(data, candidateSide, candidate, baseline));
-      game.setRandomSource(new SeededRandomSource(seed));
+      final GameData gameData = game.getData();
+      game.setRandomSource(
+          options.rng.equals("keyed")
+              ? new KeyedRandomSource(
+                  seed,
+                  () ->
+                      gameData.getSequence().getRound()
+                          + "|"
+                          + gameData.getSequence().getStep().getName())
+              : new SeededRandomSource(seed));
       game.setStopGameOnDelegateExecutionStop(true);
 
       final GameData data = game.getData();
@@ -850,6 +861,11 @@ public final class PtvEvalRunner {
     private Path traceDir = null;
     // Map XML under src/test/resources/map-xmls. Defaults to PTV.
     private String xml = DEFAULT_XML;
+    // "stream" (default): SeededRandomSource and game-wide unit ids, as every earlier run used.
+    // "keyed": KeyedRandomSource plus step-keyed unit ids, so a difference between two arms stays
+    // where it happens instead of re-phasing every later roll and id. Runs under one setting are
+    // not comparable with runs under the other.
+    private String rng = "stream";
 
     static Options parse(final String[] args) {
       final Options o = new Options();
@@ -881,6 +897,12 @@ public final class PtvEvalRunner {
           case "--trace-dir" -> o.traceDir = Path.of(value);
           case "--out" -> o.out = Path.of(value);
           case "--xml" -> o.xml = value;
+          case "--rng" -> {
+            if (!value.equals("stream") && !value.equals("keyed")) {
+              throw new IllegalArgumentException("--rng must be stream or keyed, got " + value);
+            }
+            o.rng = value;
+          }
           default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
         }
       }

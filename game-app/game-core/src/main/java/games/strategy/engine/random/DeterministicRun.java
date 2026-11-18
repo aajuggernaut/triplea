@@ -61,6 +61,19 @@ public final class DeterministicRun {
   private static volatile long baseSeed = 0L;
   private static final AtomicLong unitIdSequence = new AtomicLong();
 
+  // Opt-in (eval runner --rng keyed): unit ids keyed on the game step, the way W22 keys the policy
+  // draws. With one game-wide sequence, an arm that creates a different number of units in, say,
+  // the German purchase step shifts the id -- and so the hash order -- of every unit any player
+  // creates afterwards, re-ordering HashSet<Unit> iteration engine-wide for the rest of the game.
+  // Keyed per step, a difference in unit count stays inside the step that made it. Off by
+  // default, so runs made without it reproduce unchanged. Units created before the first step
+  // (map parsing) still come from the game-wide sequence.
+  private static volatile boolean stepKeyedUnitIds = false;
+  private static final Object unitIdLock = new Object();
+  private static boolean stepUnitIdKeyActive = false;
+  private static long stepUnitIdKey = 0L;
+  private static long stepUnitIdSequence = 0L;
+
   // Diagnostic: unit ids handed out from a thread other than the one that enabled the run.
   // getAndIncrement() is atomic, so the TOTAL is stable, but which thread receives which id is
   // not -- and Unit hashes on its id, so a racing assignment silently reorders every
@@ -179,6 +192,23 @@ public final class DeterministicRun {
       stepPolicyRandom =
           new SplittableRandom(seedFor(mix64(round * 0x9E3779B97F4A7C15L + stepName.hashCode())));
     }
+    synchronized (unitIdLock) {
+      stepUnitIdKey = mix64(round * 0x9E3779B97F4A7C15L + stepName.hashCode());
+      stepUnitIdKeyActive = true;
+      stepUnitIdSequence = 0L;
+    }
+  }
+
+  /**
+   * Turns step-keyed unit ids on or off for subsequent games. Set once per run, before {@link
+   * #enable}; it stays set across games so every game of a run uses the same scheme.
+   */
+  public static void setStepKeyedUnitIds(final boolean on) {
+    stepKeyedUnitIds = on;
+  }
+
+  public static boolean stepKeyedUnitIds() {
+    return stepKeyedUnitIds;
   }
 
   /**
@@ -222,6 +252,11 @@ public final class DeterministicRun {
     synchronized (policyLock) {
       policyRandom = new SplittableRandom(seed ^ 0x2545F4914F6CDD1DL);
       stepPolicyRandom = null;
+    }
+    synchronized (unitIdLock) {
+      stepUnitIdKeyActive = false;
+      stepUnitIdKey = 0L;
+      stepUnitIdSequence = 0L;
     }
     enabled = true;
   }
@@ -476,9 +511,22 @@ public final class DeterministicRun {
         firstOffThreadTrace = trace.toString();
       }
     }
+    // The game-wide count always advances, so unitIdsIssued() means the same in both schemes.
+    final long sequenceNumber = unitIdSequence.getAndIncrement();
+    if (stepKeyedUnitIds) {
+      synchronized (unitIdLock) {
+        if (stepUnitIdKeyActive) {
+          // A different high-bits constant from the game-wide scheme, so a step-keyed id cannot
+          // collide with one issued during map parsing.
+          return new UUID(
+              mix64(mix64(baseSeed ^ 0x3C6EF372FE94F82BL) + stepUnitIdKey),
+              mix64(stepUnitIdSequence++));
+        }
+      }
+    }
     // The low bits are mixed rather than sequential so that UUID.hashCode() still spreads well,
     // and hash-ordered collections do not degenerate into insertion order.
-    return new UUID(mix64(baseSeed ^ 0x5851F42D4C957F2DL), mix64(unitIdSequence.getAndIncrement()));
+    return new UUID(mix64(baseSeed ^ 0x5851F42D4C957F2DL), mix64(sequenceNumber));
   }
 
   /** The splitmix64 finalizer, as used by {@link java.util.SplittableRandom}. */
