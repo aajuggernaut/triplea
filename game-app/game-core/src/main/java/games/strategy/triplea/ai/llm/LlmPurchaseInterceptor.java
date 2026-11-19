@@ -163,7 +163,12 @@ final class LlmPurchaseInterceptor implements InvocationHandler {
       if (!committed) {
         result = real.purchase(proposal);
         decision.addProperty("source", "proai-fallback");
-        decision.add("bought", unitCounts(proposal));
+        // The engine can refuse ProAi's own buy too (seen once: a 38-PU plan on a 35-PU bank).
+        // It then buys nothing, exactly as stock ProAi would; the log must say so.
+        decision.add("bought", result == null ? unitCounts(proposal) : new JsonObject());
+        if (result != null) {
+          decision.addProperty("fallbackError", result);
+        }
       }
       decision.add("attempts", attempts);
       writeLog(briefingJson, decision, (System.nanoTime() - start) / 1_000_000L);

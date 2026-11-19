@@ -22,10 +22,14 @@ import games.strategy.engine.data.ProductionRule;
 import games.strategy.engine.data.UnitType;
 import games.strategy.triplea.delegate.remote.IPurchaseDelegate;
 import games.strategy.triplea.xml.TestMapGameData;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.triplea.java.collections.IntegerMap;
 
@@ -113,6 +117,41 @@ class LlmPurchaseInterceptorTest {
     assertThat(requests.get(1).get("previousError").getAsString(), is("Not enough resources"));
     verify(real, times(3)).purchase(any());
     verify(real).purchase(same(proposal));
+  }
+
+  @Test
+  void fallbackTheEngineAlsoRejectsIsLoggedAsBuyingNothing(@TempDir final Path logDir)
+      throws IOException {
+    final IntegerMap<ProductionRule> proposal = proposal();
+    when(real.purchase(any())).thenReturn("Not enough resources");
+
+    final List<JsonObject> log =
+        withDecisionLog(
+            logDir,
+            () -> interceptor(2, request -> reply("stub", "{\"armour\":50}")).decide(proposal));
+
+    final JsonObject decision = log.get(0).getAsJsonObject("decision");
+    assertThat(decision.get("source").getAsString(), is("proai-fallback"));
+    assertThat(decision.get("bought"), is(json("{}")));
+    assertThat(decision.get("fallbackError").getAsString(), is("Not enough resources"));
+    assertThat(decision.get("proAiProposal"), is(json("{\"artillery\":1,\"infantry\":3}")));
+  }
+
+  @Test
+  void acceptedFallbackIsLoggedAsProAisBuy(@TempDir final Path logDir) throws IOException {
+    final IntegerMap<ProductionRule> proposal = proposal();
+
+    final List<JsonObject> log =
+        withDecisionLog(
+            logDir,
+            () ->
+                interceptor(3, request -> LlmAgentClient.Reply.failed("connection refused", 1))
+                    .decide(proposal));
+
+    final JsonObject decision = log.get(0).getAsJsonObject("decision");
+    assertThat(decision.get("source").getAsString(), is("proai-fallback"));
+    assertThat(decision.get("bought"), is(json("{\"artillery\":1,\"infantry\":3}")));
+    assertThat(decision.has("fallbackError"), is(false));
   }
 
   @Test
@@ -211,6 +250,28 @@ class LlmPurchaseInterceptorTest {
         },
         () -> BRIEFING,
         "seed1-Axis");
+  }
+
+  /** Runs {@code action} with decision logging on, and returns the records it wrote. */
+  private static List<JsonObject> withDecisionLog(final Path logDir, final Runnable action)
+      throws IOException {
+    final String previous = System.getProperty(LlmDecisionLog.LOG_DIR_PROPERTY);
+    System.setProperty(LlmDecisionLog.LOG_DIR_PROPERTY, logDir.toString());
+    LlmDecisionLog.setGameTag("seed1-Axis");
+    try {
+      action.run();
+    } finally {
+      if (previous == null) {
+        System.clearProperty(LlmDecisionLog.LOG_DIR_PROPERTY);
+      } else {
+        System.setProperty(LlmDecisionLog.LOG_DIR_PROPERTY, previous);
+      }
+    }
+    final List<JsonObject> records = new ArrayList<>();
+    for (final String line : Files.readAllLines(logDir.resolve("seed1-Axis.jsonl"))) {
+      records.add(json(line));
+    }
+    return records;
   }
 
   /** Artillery first, then infantry: deliberately not frontier order. */
