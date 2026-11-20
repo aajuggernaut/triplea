@@ -285,11 +285,16 @@ public final class ProTerritoryValueUtils {
                 : 0;
         final int isNeutral = ProUtils.isNeutralLand(t) ? 1 : 0;
         final int landMassSize =
-            1 + data.getMap()
-                .getNeighbors(t, 6, ProMatches.territoryCanPotentiallyMoveLandUnits(player)).size();
+            1
+                + data.getMap()
+                    .getNeighbors(t, 6, ProMatches.territoryCanPotentiallyMoveLandUnits(player))
+                    .size();
         final double value =
             Math.sqrt(production + Math.sqrt(playerProduction))
-                * 32 / (1 + 3.0 * isNeutral) * landMassSize / maxLandMassSize;
+                * 32
+                / (1 + 3.0 * isNeutral)
+                * landMassSize
+                / maxLandMassSize;
         enemyCapitalsAndFactoriesMap.put(t, value * proData.getTerritoryWeight(player, t));
       }
     }

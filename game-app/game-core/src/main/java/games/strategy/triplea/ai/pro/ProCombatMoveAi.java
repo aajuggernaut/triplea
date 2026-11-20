@@ -228,8 +228,7 @@ public class ProCombatMoveAi {
     return isBombing;
   }
 
-  void prioritizeAttackOptions(
-      final GamePlayer player, final List<ProTerritory> attackOptions) {
+  void prioritizeAttackOptions(final GamePlayer player, final List<ProTerritory> attackOptions) {
 
     ProLogger.info("Prioritizing territories to try to attack");
 

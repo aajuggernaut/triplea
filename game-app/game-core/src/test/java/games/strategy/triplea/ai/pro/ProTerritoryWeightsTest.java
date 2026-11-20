@@ -36,17 +36,19 @@ class ProTerritoryWeightsTest {
     stock.getProData().initializeSimulation(stock, data, germans);
     final ProAi empty = ai(Map.of());
     assertThat(empty.getProData().hasTerritoryWeights(germans), is(false));
-    assertThat(Double.doubleToLongBits(attackValue(empty, germans)),
+    assertThat(
+        Double.doubleToLongBits(attackValue(empty, germans)),
         is(Double.doubleToLongBits(attackValue(stock, germans))));
   }
 
   private ProAi ai(final Map<String, Double> weights) {
-    final ProAi ai = new ProAi("Germans", "Hard AI") {
-      @Override
-      protected Map<String, Double> getTerritoryWeights(final GamePlayer player) {
-        return weights;
-      }
-    };
+    final ProAi ai =
+        new ProAi("Germans", "Hard AI") {
+          @Override
+          protected Map<String, Double> getTerritoryWeights(final GamePlayer player) {
+            return weights;
+          }
+        };
     ai.getProData().initializeSimulation(ai, data, germans);
     return ai;
   }

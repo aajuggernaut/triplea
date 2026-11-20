@@ -28,8 +28,11 @@ public record LlmTerritoryHints(Map<String, Map<String, Double>> players, String
     final byte[] bytes = Files.readAllBytes(file);
     final JsonElement root;
     try {
-      root = new GsonBuilder().setStrictness(Strictness.STRICT).create()
-          .fromJson(new String(bytes, StandardCharsets.UTF_8), JsonElement.class);
+      root =
+          new GsonBuilder()
+              .setStrictness(Strictness.STRICT)
+              .create()
+              .fromJson(new String(bytes, StandardCharsets.UTF_8), JsonElement.class);
     } catch (final RuntimeException e) {
       throw new IllegalArgumentException("Invalid hints JSON: " + e.getMessage(), e);
     }
@@ -56,14 +59,16 @@ public record LlmTerritoryHints(Map<String, Map<String, Double>> players, String
         }
         final double weight = value.getAsDouble();
         if (!Double.isFinite(weight) || weight <= 0) {
-          throw new IllegalArgumentException("Hint weight must be finite and positive: " + territory.getKey());
+          throw new IllegalArgumentException(
+              "Hint weight must be finite and positive: " + territory.getKey());
         }
         weights.put(territory.getKey(), weight);
       }
       players.put(entry.getKey(), Map.copyOf(weights));
     }
     try {
-      final String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+      final String hash =
+          HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
       return new LlmTerritoryHints(Map.copyOf(players), hash.substring(0, 9));
     } catch (final NoSuchAlgorithmException e) {
       throw new IllegalStateException("SHA-256 unavailable", e);

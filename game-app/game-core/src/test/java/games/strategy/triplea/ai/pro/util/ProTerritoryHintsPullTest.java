@@ -41,9 +41,13 @@ class ProTerritoryHintsPullTest {
     final ProData hinted = proData(Map.of("Egypt", 3.0, "Germany", 3.0, "112 Sea Zone", 3.0));
     final Map<Territory, Double> actual = pull(hinted, germans, List.of());
     final int landMass = ProTerritoryValueUtils.findMaxLandMassSize(germans);
-    final int reach = 1 + data.getMap().getNeighbors(
-        egypt, 6, ProMatches.territoryCanPotentiallyMoveLandUnits(germans)).size();
-    final double value = Math.sqrt(TerritoryAttachment.getProduction(egypt)) * 32 * reach / landMass;
+    final int reach =
+        1
+            + data.getMap()
+                .getNeighbors(egypt, 6, ProMatches.territoryCanPotentiallyMoveLandUnits(germans))
+                .size();
+    final double value =
+        Math.sqrt(TerritoryAttachment.getProduction(egypt)) * 32 * reach / landMass;
     assertThat(actual.get(egypt), closeTo(value * 3, 1e-12));
     assertThat(actual.size(), is(plain.size() + 1));
     assertThat(pull(hinted, germans, List.of(egypt)).containsKey(egypt), is(false));
@@ -55,23 +59,29 @@ class ProTerritoryHintsPullTest {
     final ProData hinted = proData(Map.of("Russia", 3.0));
     // A separately parsed map supplies different Territory and GamePlayer objects, as copies do.
     final GameData copy = TestMapGameData.GLOBAL1940.getGameData();
-    hinted.initializeSimulation(hinted.getProAi(), copy, copy.getPlayerList().getPlayerId("Germans"));
-    assertThat(hinted.getTerritoryWeight(hinted.getPlayer(), copy.getMap().getTerritoryOrNull("Russia")), is(3.0));
-    assertThat(hinted.getTerritoryWeight(copy.getPlayerList().getPlayerId("Japanese"), russia), is(1.0));
+    hinted.initializeSimulation(
+        hinted.getProAi(), copy, copy.getPlayerList().getPlayerId("Germans"));
+    assertThat(
+        hinted.getTerritoryWeight(hinted.getPlayer(), copy.getMap().getTerritoryOrNull("Russia")),
+        is(3.0));
+    assertThat(
+        hinted.getTerritoryWeight(copy.getPlayerList().getPlayerId("Japanese"), russia), is(1.0));
   }
 
-  private Map<Territory, Double> pull(final ProData proData, final GamePlayer player, final List<Territory> attacking) {
+  private Map<Territory, Double> pull(
+      final ProData proData, final GamePlayer player, final List<Territory> attacking) {
     return ProTerritoryValueUtils.findEnemyCapitalsAndFactoriesValue(
         proData, player, ProTerritoryValueUtils.findMaxLandMassSize(player), List.of(), attacking);
   }
 
   private ProData proData(final Map<String, Double> weights) {
-    final ProAi ai = new ProAi("Germans", "Hard AI") {
-      @Override
-      protected Map<String, Double> getTerritoryWeights(final GamePlayer player) {
-        return weights;
-      }
-    };
+    final ProAi ai =
+        new ProAi("Germans", "Hard AI") {
+          @Override
+          protected Map<String, Double> getTerritoryWeights(final GamePlayer player) {
+            return weights;
+          }
+        };
     ai.getProData().initializeSimulation(ai, data, germans);
     return ai.getProData();
   }
