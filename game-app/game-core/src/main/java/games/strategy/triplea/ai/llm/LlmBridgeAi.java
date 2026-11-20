@@ -8,6 +8,8 @@ import games.strategy.engine.data.UnitType;
 import games.strategy.triplea.Constants;
 import games.strategy.triplea.ai.pro.ProAi;
 import games.strategy.triplea.delegate.remote.IPurchaseDelegate;
+import java.io.IOException;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.triplea.java.collections.IntegerMap;
 
@@ -32,9 +34,26 @@ import org.triplea.java.collections.IntegerMap;
  */
 @Slf4j
 public class LlmBridgeAi extends ProAi {
+  private boolean hintsLoaded;
+  private LlmTerritoryHints hints = new LlmTerritoryHints(Map.of(), "none");
 
   public LlmBridgeAi(final String name, final String playerLabel) {
     super(name, playerLabel);
+  }
+
+  @Override
+  protected Map<String, Double> getTerritoryWeights(final GamePlayer player) {
+    // An AI belongs to one game. Latch the file (or its failure) before the first simulation;
+    // edits to the source file cannot change its priorities halfway through the game.
+    if (!hintsLoaded) {
+      hintsLoaded = true;
+      try {
+        hints = LlmTerritoryHints.fromSystemProperty(player.getData());
+      } catch (final IOException | RuntimeException e) {
+        log.error("Invalid territory hints; continuing without hints: {}", e.getMessage());
+      }
+    }
+    return hints.forPlayer(player.getName());
   }
 
   @Override

@@ -4,10 +4,12 @@ import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.GameTestUtils;
 import games.strategy.engine.data.Territory;
+import games.strategy.engine.data.gameparser.GameParser;
 import games.strategy.engine.framework.ServerGame;
 import games.strategy.engine.framework.startup.ui.PlayerTypes;
 import games.strategy.engine.random.DeterministicRun;
 import games.strategy.triplea.ai.llm.LlmDecisionLog;
+import games.strategy.triplea.ai.llm.LlmTerritoryHints;
 import games.strategy.triplea.ai.pro.ProAi;
 import games.strategy.triplea.ai.pro.PtvFeature;
 import games.strategy.triplea.ai.pro.logging.PtvTrace;
@@ -132,6 +134,17 @@ public final class PtvEvalRunner {
     final Options options = Options.parse(args);
     GameTestUtils.setUp();
 
+    // Fail before launching any game, rather than silently measuring the no-hint arm.
+    final String hintsFingerprint;
+    if (System.getProperty(LlmTerritoryHints.FILE_PROPERTY) == null) {
+      hintsFingerprint = "none";
+    } else {
+      final GameData validationData =
+          GameParser.parse(Path.of("src", "test", "resources", "map-xmls", options.xml), false)
+              .orElseThrow();
+      hintsFingerprint = LlmTerritoryHints.fromSystemProperty(validationData).fingerprint();
+    }
+
     final PlayerTypes.Type candidate = bot(options.candidate);
     final PlayerTypes.Type baseline = bot(options.baseline);
     if (candidate == baseline && !options.allowSelf) {
@@ -176,6 +189,7 @@ public final class PtvEvalRunner {
       csv.println("# ptv-eval run " + Instant.now());
       csv.println("# map=" + mapLabel(options.xml));
       csv.println("# engine=" + engineBuildId());
+      csv.println("# hints=" + hintsFingerprint);
       csv.println("# candidate=" + options.candidate + " baseline=" + options.baseline);
       csv.println("# side=" + options.side);
       csv.println(

@@ -1,9 +1,11 @@
 package org.triplea.ptv.eval;
 
+import com.google.gson.GsonBuilder;
 import games.strategy.engine.data.GameData;
 import games.strategy.engine.data.GamePlayer;
 import games.strategy.engine.data.GameTestUtils;
 import games.strategy.engine.data.Territory;
+import games.strategy.engine.data.Unit;
 import games.strategy.engine.framework.ServerGame;
 import games.strategy.engine.framework.startup.ui.PlayerTypes;
 import games.strategy.engine.random.DeterministicRun;
@@ -11,7 +13,9 @@ import games.strategy.triplea.ai.pro.ProAi;
 import games.strategy.triplea.ai.pro.PtvFeature;
 import games.strategy.triplea.ai.pro.logging.PtvTrace;
 import games.strategy.triplea.attachments.TerritoryAttachment;
+import games.strategy.triplea.delegate.Matches;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -20,6 +24,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -33,9 +38,10 @@ import lombok.extern.slf4j.Slf4j;
  *       [--mode turn|phase|steps]   default turn: run until the acting player changes
  *       [--phase combatMove]        with --mode phase: run through the steps whose name contains this
  *       [--steps N]                 with --mode steps: run exactly N steps
- *       [--player-type pro|ptv]     AI assigned to every player (ptv reads -Dtriplea.ai.ptv.features)
+ *       [--player-type pro|ptv|llm] AI assigned to every player (llm also reads the hints file)
  *       [--seed N]                  DeterministicRun seed, default 1000 -- same seed, same decisions
  *       [--trace PATH]              default: alongside the save, .trace.txt appended
+ *       [--report PATH]             optional machine-readable turn summary (JSON)
  * </pre>
  *
  * <p>Positions come from two places: saves of the humans' games ({@code positions/corpus}), and
@@ -110,6 +116,8 @@ public final class PtvPositionHarness {
       // after the current step -- bind to it when it appears, and treat trailing playerless
       // steps (end-of-round bookkeeping) as part of the turn rather than a stop signal.
       String turnPlayer = startPlayer;
+      final Map<String, Integer> purchase = new TreeMap<>();
+      final Set<String> attacked = new TreeSet<>();
       while (!game.isGameOver() && stepsRun < STEP_SAFETY_CAP) {
         final String stepName = data.getSequence().getStep().getName();
         final String current = playerName(data);
@@ -135,7 +143,28 @@ public final class PtvPositionHarness {
         if (options.mode.equals("steps") && stepsRun >= options.steps) {
           break;
         }
+        final GamePlayer acting = data.getSequence().getStep().getPlayerId();
+        final Map<String, Integer> unplacedBefore = unitCounts(acting);
         game.runNextStep();
+        if (acting != null && acting.getName().equals(turnPlayer)) {
+          final String phase = stepName.toLowerCase(Locale.ROOT);
+          if (phase.contains("purchase")) {
+            unitCounts(acting)
+                .forEach(
+                    (name, count) -> {
+                      final int bought = count - unplacedBefore.getOrDefault(name, 0);
+                      if (bought > 0) {
+                        purchase.merge(name, bought, Integer::sum);
+                      }
+                    });
+          }
+          if (phase.contains("combatmove") && !phase.contains("noncombat")) {
+            final var tracker = data.getBattleDelegate().getBattleTracker();
+            tracker.getPendingBattleSitesWithoutBombing().forEach(t -> attacked.add(t.getName()));
+            tracker.getPendingBattleSitesWithBombing().forEach(t -> attacked.add(t.getName()));
+            tracker.getConquered().forEach(t -> attacked.add(t.getName()));
+          }
+        }
         stepsRun++;
       }
       if (stepsRun >= STEP_SAFETY_CAP) {
@@ -144,6 +173,42 @@ public final class PtvPositionHarness {
 
       final Snapshot after = Snapshot.of(data);
       report(data, before, after, stepsRun, tracePath);
+      final Map<String, Object> summary = new LinkedHashMap<>();
+      summary.put("save", options.save.toString());
+      summary.put("startRound", startRound);
+      summary.put("startStep", startStep);
+      summary.put("startPlayer", startPlayer);
+      summary.put("actingPlayer", turnPlayer);
+      summary.put("stepsRun", stepsRun);
+      summary.put("purchase", purchase);
+      summary.put("attacked", attacked);
+      final Map<String, Object> changes = new TreeMap<>();
+      before.owner.forEach(
+          (name, owner) -> {
+            if (!owner.equals(after.owner.get(name))) {
+              changes.put(name, List.of(owner, after.owner.get(name)));
+            }
+          });
+      summary.put("ownershipChanges", changes);
+      final Map<String, Map<String, Integer>> land = new TreeMap<>();
+      for (final Territory t : data.getMap().getTerritories()) {
+        final Map<String, Integer> counts = new TreeMap<>();
+        for (final Unit unit : t.getUnits()) {
+          if (unit.getOwner().getName().equals(turnPlayer) && Matches.unitIsLand().test(unit)) {
+            counts.merge(unit.getType().getName(), 1, Integer::sum);
+          }
+        }
+        if (!counts.isEmpty()) {
+          land.put(t.getName(), counts);
+        }
+      }
+      summary.put("landUnitsByTerritory", land);
+      final String json = new GsonBuilder().setPrettyPrinting().create().toJson(summary);
+      log.info("Turn summary: {}", json);
+      if (options.report != null) {
+        Files.createDirectories(options.report.toAbsolutePath().getParent());
+        Files.writeString(options.report, json + System.lineSeparator());
+      }
     } finally {
       if (game != null) {
         game.stopGame();
@@ -157,6 +222,14 @@ public final class PtvPositionHarness {
   private static String playerName(final GameData data) {
     final GamePlayer player = data.getSequence().getStep().getPlayerId();
     return player == null ? "<none>" : player.getName();
+  }
+
+  private static Map<String, Integer> unitCounts(final GamePlayer player) {
+    final Map<String, Integer> counts = new TreeMap<>();
+    if (player != null) {
+      player.getUnits().forEach(u -> counts.merge(u.getType().getName(), 1, Integer::sum));
+    }
+    return counts;
   }
 
   private static void report(
@@ -255,6 +328,7 @@ public final class PtvPositionHarness {
     private String playerTypeName = "pro";
     private long seed = 1000L;
     private Path trace = null;
+    private Path report = null;
 
     PlayerTypes.Type playerType() {
       return switch (playerTypeName.toLowerCase(Locale.ROOT)) {
@@ -282,6 +356,7 @@ public final class PtvPositionHarness {
           case "--player-type" -> o.playerTypeName = value;
           case "--seed" -> o.seed = Long.parseLong(value);
           case "--trace" -> o.trace = Path.of(value);
+          case "--report" -> o.report = Path.of(value);
           default -> throw new IllegalArgumentException("Unknown argument: " + args[i]);
         }
       }

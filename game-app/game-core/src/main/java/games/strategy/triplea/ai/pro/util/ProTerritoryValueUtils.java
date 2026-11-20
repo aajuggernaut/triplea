@@ -64,7 +64,7 @@ public final class ProTerritoryValueUtils {
     final int maxLandMassSize = findMaxLandMassSize(player);
     final Map<Territory, Double> enemyCapitalsAndFactoriesMap =
         findEnemyCapitalsAndFactoriesValue(
-            player, maxLandMassSize, territoriesThatCantBeHeld, territoriesToAttack);
+            proData, player, maxLandMassSize, territoriesThatCantBeHeld, territoriesToAttack);
 
     final Map<Territory, Double> territoryValueMap = new HashMap<>();
     for (final Territory t : territoriesToCheck) {
@@ -207,7 +207,8 @@ public final class ProTerritoryValueUtils {
     return maxLandMassSize;
   }
 
-  private static Map<Territory, Double> findEnemyCapitalsAndFactoriesValue(
+  static Map<Territory, Double> findEnemyCapitalsAndFactoriesValue(
+      final ProData proData,
       final GamePlayer player,
       final int maxLandMassSize,
       final List<Territory> territoriesThatCantBeHeld,
@@ -261,6 +262,36 @@ public final class ProTerritoryValueUtils {
               * landMassSize
               / maxLandMassSize;
       enemyCapitalsAndFactoriesMap.put(t, value);
+    }
+
+    // Leave the original path (including its iteration order and arithmetic) alone without hints.
+    if (proData.hasTerritoryWeights(player)) {
+      enemyCapitalsAndFactoriesMap.replaceAll(
+          (t, value) -> value * proData.getTerritoryWeight(player, t));
+      final List<GamePlayer> potentialEnemies = ProUtils.getPotentialEnemyPlayers(player);
+      for (final String name : proData.getTerritoryWeights().keySet().stream().sorted().toList()) {
+        final Territory t = data.getMap().getTerritoryOrNull(name);
+        if (t == null
+            || t.isWater()
+            || !potentialEnemies.contains(t.getOwner())
+            || territoriesToAttack.contains(t)
+            || enemyCapitalsAndFactoriesMap.containsKey(t)) {
+          continue;
+        }
+        final int production = TerritoryAttachment.getProduction(t);
+        final double playerProduction =
+            TerritoryAttachment.get(t).map(TerritoryAttachment::isCapital).orElse(false)
+                ? ProUtils.getPlayerProduction(t.getOwner(), data)
+                : 0;
+        final int isNeutral = ProUtils.isNeutralLand(t) ? 1 : 0;
+        final int landMassSize =
+            1 + data.getMap()
+                .getNeighbors(t, 6, ProMatches.territoryCanPotentiallyMoveLandUnits(player)).size();
+        final double value =
+            Math.sqrt(production + Math.sqrt(playerProduction))
+                * 32 / (1 + 3.0 * isNeutral) * landMassSize / maxLandMassSize;
+        enemyCapitalsAndFactoriesMap.put(t, value * proData.getTerritoryWeight(player, t));
+      }
     }
 
     return enemyCapitalsAndFactoriesMap;

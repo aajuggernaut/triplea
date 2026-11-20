@@ -228,7 +228,7 @@ public class ProCombatMoveAi {
     return isBombing;
   }
 
-  private void prioritizeAttackOptions(
+  void prioritizeAttackOptions(
       final GamePlayer player, final List<ProTerritory> attackOptions) {
 
     ProLogger.info("Prioritizing territories to try to attack");
@@ -277,6 +277,10 @@ public class ProCombatMoveAi {
               * (1 + 4.0 * productionAndIsCapital.isCapital)
               * (1 + 2.0 * isNotNeutralAdjacentToMyCapital)
               * (1 - 0.9 * isNeutral);
+
+      if (proData.hasTerritoryWeights(player)) {
+        attackValue *= proData.getTerritoryWeight(player, t);
+      }
 
       // Check if a negative value neutral territory should be attacked
       if (attackValue <= 0 && !patd.isNeedAmphibUnits() && ProUtils.isNeutralLand(t)) {

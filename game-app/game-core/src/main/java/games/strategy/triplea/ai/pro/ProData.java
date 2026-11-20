@@ -47,6 +47,7 @@ public final class ProData {
   // than cached statically: ProAi instances outlive a single game in batch evaluation, so a static
   // cache would serve one game's territories to the next.
   private Map<Territory, Double> objectiveValues = Map.of();
+  private Map<String, Double> territoryWeights = Map.of();
 
   private AbstractProAi proAi;
   private GameData data;
@@ -91,6 +92,16 @@ public final class ProData {
     return unitValueMap.getInt(type);
   }
 
+  public boolean hasTerritoryWeights(final GamePlayer forPlayer) {
+    return player.equals(forPlayer) && !territoryWeights.isEmpty();
+  }
+
+  public double getTerritoryWeight(final GamePlayer forPlayer, final Territory territory) {
+    return hasTerritoryWeights(forPlayer)
+        ? territoryWeights.getOrDefault(territory.getName(), 1.0)
+        : 1.0;
+  }
+
   private void hiddenInitialize(
       final AbstractProAi proAi,
       final GameData data,
@@ -100,6 +111,7 @@ public final class ProData {
     this.data = data;
     this.player = player;
     this.isSimulation = isSimulation;
+    territoryWeights = Map.copyOf(proAi.getTerritoryWeights(player));
 
     if (!Properties.getLowLuck(data.getProperties())) {
       winPercentage = 90;

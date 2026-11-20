@@ -103,6 +103,11 @@ public abstract class AbstractProAi extends AbstractAi {
     proData.initialize(this);
   }
 
+  /** Static strategic priorities, keyed by name so they survive purchase's GameData copies. */
+  protected Map<String, Double> getTerritoryWeights(final GamePlayer player) {
+    return Map.of();
+  }
+
   public void setStoredStrafingTerritories(final List<Territory> strafingTerritories) {
     storedStrafingTerritories = strafingTerritories;
   }
